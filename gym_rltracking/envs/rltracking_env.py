@@ -105,7 +105,7 @@ class RltrackingEnv(gym.Env):
         self.last_bboxes = []
 
         self.number = 2
-        self.gt_all = _get_gt()
+        # self.gt_all = _get_gt()
         self.det_all = load_detection_result()
         self.gt = []
 
@@ -115,8 +115,8 @@ class RltrackingEnv(gym.Env):
         if use_gpu:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def init_view(self, view):
-        self.gt_all = _get_gt(view)
+    # def init_view(self, view):
+        # self.gt_all = _get_gt(view)
         # self.det_all = _get_detection(view)
 
     def init_source(self, source):
@@ -234,37 +234,37 @@ class RltrackingEnv(gym.Env):
         Not using for now. Only use bbox reward
     """
 
-    def _op_reward(self, op_action):
-        reward = 0
-
-        keep_count = 0
-        add_count = 0
-        remove_count = 0
-        ignore_count = 0
-
-        gt2 = self._get_gt_label(self._get_current_gt())
-        gt1 = self._get_gt_label(self._get_last_gt())
-
-        for i in range(max(len(gt1), len(gt2))):
-            if len(gt1) > len(gt2):
-                gt = gt1[i]
-            else:
-                gt = gt2[i]
-
-            if gt in gt1 and gt not in gt2:
-                remove_count += 1
-            elif gt not in gt1 and gt in gt2:
-                add_count += 1
-            elif gt in gt1 and gt in gt2:
-                keep_count += 1
-
-        for i, act in enumerate(op_action):
-            if act == 1:
-                if add_count > 0:
-                    add_count -= 1
-                    reward += 1
-
-        return reward
+    # def _op_reward(self, op_action):
+    #     reward = 0
+    #
+    #     keep_count = 0
+    #     add_count = 0
+    #     remove_count = 0
+    #     ignore_count = 0
+    #
+    #     gt2 = self._get_gt_label(self._get_current_gt())
+    #     gt1 = self._get_gt_label(self._get_last_gt())
+    #
+    #     for i in range(max(len(gt1), len(gt2))):
+    #         if len(gt1) > len(gt2):
+    #             gt = gt1[i]
+    #         else:
+    #             gt = gt2[i]
+    #
+    #         if gt in gt1 and gt not in gt2:
+    #             remove_count += 1
+    #         elif gt not in gt1 and gt in gt2:
+    #             add_count += 1
+    #         elif gt in gt1 and gt in gt2:
+    #             keep_count += 1
+    #
+    #     for i, act in enumerate(op_action):
+    #         if act == 1:
+    #             if add_count > 0:
+    #                 add_count -= 1
+    #                 reward += 1
+    #
+    #     return reward
 
     # match next frame detection to last frame detection, give model a update of all objects
     def _match_bbox(self, new_boxes):
@@ -395,24 +395,24 @@ class RltrackingEnv(gym.Env):
         # self.obs_memory = next_frame
         return obs
 
-    def _get_gt_label(self, gt):
-        labels = []
-        for g in gt:
-            labels.append(g[0])
-        return labels
-
-    def _get_last_gt(self):
-        result = []
-        if self.step_count == 0:
-            return result
-        else:
-            gt_all = self.gt_all
-            for gt in gt_all:
-                if int(gt[5]) == self.frame_count - 1 and int(gt[6]) == 0:
-                    for i in range(1, 5):
-                        gt[i] = int(gt[i])
-                    result.append(gt)
-            return result
+    # def _get_gt_label(self, gt):
+    #     labels = []
+    #     for g in gt:
+    #         labels.append(g[0])
+    #     return labels
+    #
+    # def _get_last_gt(self):
+    #     result = []
+    #     if self.step_count == 0:
+    #         return result
+    #     else:
+    #         gt_all = self.gt_all
+    #         for gt in gt_all:
+    #             if int(gt[5]) == self.frame_count - 1 and int(gt[6]) == 0:
+    #                 for i in range(1, 5):
+    #                     gt[i] = int(gt[i])
+    #                 result.append(gt)
+    #         return result
 
     def _get_current_gt(self):
         result = []

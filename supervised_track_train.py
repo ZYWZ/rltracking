@@ -237,7 +237,7 @@ class Learner:
         self.trajectories = ""
 
         self.env = gym.make('gym_rltracking:rltracking-v0')
-        self.env.init_view(args.view)
+        # self.env.init_view(args.view)
         self.env.init_device(args.gpu_training)
 
 
