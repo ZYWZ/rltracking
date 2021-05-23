@@ -121,6 +121,9 @@ class RltrackingEnv(gym.Env):
 
     def init_source(self, source):
         self.source = source
+        if source == "PETS09-S2L1":
+            self.img_w = 720
+            self.img_h = 576
 
     def initiate_obj(self, start_frame, view="001"):
         self.obj_locations = []
@@ -154,12 +157,12 @@ class RltrackingEnv(gym.Env):
         for i, act in enumerate(op_action):
             # add
             if act == 1 and (self.obj_memories[i] == 0 or self.obj_memories[i] == 3):
-                box = self.rescale_bboxes(bbox_action[i], (720, 576))
+                box = self.rescale_bboxes(bbox_action[i], (self.img_w, self.img_h))
                 self.obj_locations[i] = box
             # keep
             if act == 2 and self.obj_memories[i] != 0 and sorted(self.obj_locations[i]) != sorted(
                     np.array([0, 0, 0, 0])):
-                box = self.rescale_bboxes(bbox_action[i], (720, 576))
+                box = self.rescale_bboxes(bbox_action[i], (self.img_w, self.img_h))
                 self.obj_locations[i] = box
             # remove
             elif act == 3:
@@ -172,16 +175,16 @@ class RltrackingEnv(gym.Env):
 
     def step(self, action):
         # directly update the objects' location according to the actions
-        bbox_action = action['pred_boxes'].cpu().detach().numpy()[0]
-        op_action = action['operations'].cpu().detach().numpy()[0]
+        bbox_action = action['pred_boxes'].cpu().detach().numpy()
+        op_action = action['operations'].cpu().detach().numpy()
 
         self.update_object(bbox_action, op_action)
 
         # update ground truth of current frame
-        self.gt = self._get_current_gt()
+        # self.gt = self._get_current_gt()
 
-        reward = self._tracking_reward(op_action, bbox_action)
-
+        # reward = self._tracking_reward(op_action, bbox_action)
+        reward = 0
         done = False
 
         obs = self._get_obs()
@@ -374,22 +377,36 @@ class RltrackingEnv(gym.Env):
         result = self.det_all[self.source]
         obs = []
         new_boxes = []
+        mask = []
 
         for line in result:
             line = line.split(',')
             if int(line[0]) == next_frame:
                 temp = []
-                for i in line[2:]:
+                for i in line[2:6]:
                     temp.append(float(i))
                 new_boxes.append(temp)
+                mask.append(1)
 
         result = new_boxes
+        for box in result:
+            if box[0] < 0:
+                box[0] = 0
+            box[0] = box[0] / self.img_w * 1000
+            box[1] = box[1] / self.img_h * 1000
+            box[2] = box[2] / self.img_w * 1000
+            box[3] = box[3] / self.img_h * 1000
 
-        next_frame = torch.as_tensor(result)
+        for i in range(self.obj_count - len(result)):
+            result.append([0, 0, 0, 0])
+            mask.append(0)
+
+        # next_frame = torch.as_tensor(result)
 
         obs = {
-            'next_frame': next_frame.to(self.device),
-            'locations': torch.Tensor(self.obj_locations).to(self.device),
+            'next_frame': result,
+            'mask': mask,
+            'locations': self.obj_locations,
         }
 
         # self.obs_memory = next_frame
@@ -492,7 +509,7 @@ class RltrackingEnv(gym.Env):
 
         for i, act in enumerate(bbox_action):
             if op_action[i] != 0:
-                box = self.rescale_bboxes(act, (720, 576))
+                box = self.rescale_bboxes(act, (self.img_w, self.img_h))
                 start_point = (int(box[0]), int(box[1]))
                 end_point = (int(box[2]), int(box[3]))
                 img = cv2.rectangle(img, start_point, end_point, (255, 0, 0), cv2.FILLED)

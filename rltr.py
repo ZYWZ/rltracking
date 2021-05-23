@@ -14,8 +14,8 @@ class RLTR(nn.Module):
     def __init__(self, obs_space=None, action_space=None, hidden_dim=256, nheads=8, num_encoder_layers=3, num_decoder_layers=3):
         super().__init__()
 
-        self.detection_embedder = Embedder(1000, 64)
-        self.entity_embedder = Embedder(1000, 64)
+        self.detection_embedder = Embedder(1200, 64)
+        self.entity_embedder = Embedder(1200, 64)
         self.operation_embedder = Embedder(4, 64)
 
         # the positional Encoding
@@ -47,49 +47,69 @@ class RLTR(nn.Module):
             layers += [nn.Linear(sizes[j], sizes[j + 1]), act()]
         return nn.Sequential(*layers)
 
-    def forward(self, obs):
-        detections = obs['next_frame']
-        entities = obs['locations']
-        detections = detections[:, :4].long()
-        entities = entities.long()
+    def forward(self, obss):
+        """
+        expect list of dicts. Each dict contains a observation from the envrionment.
 
-        cur_emb = self.detection_embedder(detections).flatten(start_dim=1).unsqueeze(1)
-        entitity_emb = self.entity_embedder(entities).flatten(start_dim=1).unsqueeze(1)
+        :param - obss: batched observations of list [batch_size x dict]
+        :return:
+             - pred_boxes: list of tensors. batched predicted normalized boxes coordinates [batch_size x num_queries x 4]
+             - operations: list of tensors. batched predicted operation logits [batch_size x num_queries x 4]
+        """
+        batch_size = len(obss)
+        detections = []
+        entities = []
+        masks = []
 
-        src1 = self.pos_encoder(cur_emb)
-        if entitity_emb.shape[2] == 64:
-            print(entities)
-        src2 = self.pos_encoder(entitity_emb)
+        for i, obs in enumerate(obss):
+            detection = obs['next_frame']
+            entity = obs['locations']
+            mask = obs['mask']
+            detections.append(detection)
+            entities.append(entity)
+            masks.append(mask)
 
-        det_encod = self.detection_encoder(src1)
+        detections = torch.Tensor(detections).long()
+        entities = torch.Tensor(entities).long()
+        masks = torch.Tensor(masks)
+        cur_emb = self.detection_embedder(detections).flatten(start_dim=2)
+        entitity_emb = self.entity_embedder(entities).flatten(start_dim=2)
+
+        src1 = self.pos_encoder(cur_emb).permute(1, 0, 2)
+        src2 = self.pos_encoder(entitity_emb).permute(1, 0, 2)
+
+        det_encod = self.detection_encoder(src1, src_key_padding_mask=masks)
         ent_encod = self.entity_encoder(src2)
 
-        tgt = self.query_pos.unsqueeze(1)
         memory = torch.cat((det_encod, ent_encod), dim=0)
 
-        output = self.transformer_decoder(tgt, memory).transpose(0, 1)
+        tgt = self.query_pos.unsqueeze(1).repeat(1, batch_size, 1)
+        output = self.transformer_decoder(tgt, memory).permute(1, 0, 2)
+
+        pred_boxes = self.linear_offset(output).sigmoid()
+        operations = self.operation(output)
 
         # return transformer output
-        return {'pred_boxes': self.linear_offset(output).sigmoid(),
-            'operations': self.operation(output)}
+        return {'pred_boxes': pred_boxes,
+            'operations': operations}
 
 
 class PositionalEncoding(nn.Module):
 
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
+    def __init__(self, d_model, batch_size=8, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
-        pe = torch.zeros(max_len, d_model)
+        pe = torch.zeros(batch_size, max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        pe[:, :, 0::2] = torch.sin(position * div_term)
+        pe[:, :, 1::2] = torch.cos(position * div_term)
+        # pe = pe.transpose(0, 1)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
+        x = x + self.pe[:, :x.size(1), :]
         return self.dropout(x)
 
 

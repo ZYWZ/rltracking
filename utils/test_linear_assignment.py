@@ -32,6 +32,6 @@ from torch import nn
 # dist = Categorical(logits=torch.Tensor([[1,2,3,4],[1,2,3,4]]))
 # for i in range(20):
 #         print(dist.sample())
-
-print(torch.Tensor(np.array([1,1,1,1,1])).long())
+src_key_padding_mask = torch.randint(0,2,(2, 4))
+print(src_key_padding_mask)
 

@@ -50,7 +50,7 @@ def get_args_parser():
                         help='whether to use gpu for training')
     parser.add_argument('--load_pretrained_model', default=False, type=bool,
                         help='whether to load pretrained model')
-    parser.add_argument('--keep_training', default=True, type=bool,
+    parser.add_argument('--keep_training', default=False, type=bool,
                         help='keep train the last model')
     parser.add_argument('--batch_size', default=8, type=int,
                         help='set the training batch size')
@@ -236,23 +236,35 @@ class Learner:
         self.optimizer = Adam(self.model.parameters(), lr=args.lr)
         self.trajectories = ""
 
-        self.env = gym.make('gym_rltracking:rltracking-v0')
-        # self.env.init_view(args.view)
-        self.env.init_device(args.gpu_training)
 
-
-    def train_one_epoch(self, env, model, trajectories, frames, optimizer, device, epoch):
+    def train_one_epoch(self, model, trajectories, frames, optimizer, device, epoch):
         model.train()
-        length = len(trajectories[0])
-        outputs = []
+        length = len(trajectories[0][0])
+        batch_outputs = []
+        obss = []
+        envs = []
         targets = trajectories
         for frame in frames:
+            env = gym.make('gym_rltracking:rltracking-v0')
+            # self.env.init_view(args.view)
+            env.init_device(args.gpu_training)
             obs = env.initiate_obj(frame)
-            # collect output
-            for i in range(length):
-                output = model(obs)
+            obss.append(obs)
+            envs.append(env)
 
+        for i in range(length):
+            policy_logits = model(obss)
+            batch_outputs.append(policy_logits)
+            obss = []
+            for j, env in enumerate(envs):
+                op_action = Categorical(logits=policy_logits['operations'][j]).sample()
+                bbox_action = policy_logits['pred_boxes'][j]
+                action = {'pred_boxes': bbox_action,
+                              'operations': op_action}
+                obs, reward, done, _ = env.step(action)
+                obss.append(obs)
 
+        # print(batch_outputs)
         pass
 
     def run(self):
@@ -260,7 +272,7 @@ class Learner:
         tracking_results = load_tracking_result()
         # detection_results = load_detection_result()
 
-        self.model.to(self.device)
+        # self.model.to(self.device)
         epoch = 0
         frame_count = 0
         sources = ['ADL-Rundle-6', 'ADL-Rundle-8', 'ETH-Bahnhof', 'ETH-Pedcross2', 'ETH-Sunnyday', 'KITTI-13', 'KITTI-17', 'PETS09-S2L1', 'TUD-Campus', 'TUD-Stadtmitte', 'Venice-2']
@@ -271,7 +283,7 @@ class Learner:
         while frame_count < total_frames:
             length = 10
             trajectories, frames = sample_random_batch(tracking_results, BATCH_SIZE, source, length)
-            loss = self.train_one_epoch(self.env, self.model, trajectories, frames, self.optimizer, self.device, epoch)
+            loss = self.train_one_epoch(self.model, trajectories, frames, self.optimizer, self.device, epoch)
             # losses.append(loss)
 
 
