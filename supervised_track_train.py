@@ -7,6 +7,7 @@ from os import walk
 import argparse
 import torch
 from torch.optim import Adam
+from torch.nn import CrossEntropyLoss
 from torch.distributions.normal import Normal
 from model import RLTRdemo
 from rltr import RLTR
@@ -24,7 +25,7 @@ from torch.distributions.categorical import Categorical
 import matplotlib.pyplot as plt
 
 FINE_TUNING = False
-total_frames = 1000
+total_frames = 5000
 
 INIT_MODEL_PATH = "models/state_dict_rltr_init.pt"
 MODEL_PATH = "models/state_dict_rltr.pt"
@@ -50,11 +51,11 @@ def get_args_parser():
                         help='whether to use gpu for training')
     parser.add_argument('--load_pretrained_model', default=False, type=bool,
                         help='whether to load pretrained model')
-    parser.add_argument('--keep_training', default=False, type=bool,
+    parser.add_argument('--keep_training', default=True, type=bool,
                         help='keep train the last model')
     parser.add_argument('--batch_size', default=8, type=int,
                         help='set the training batch size')
-    parser.add_argument('--lr', default=0.00001, type=float,
+    parser.add_argument('--lr', default=0.0001, type=float,
                         help='learning rate of the optimizer')
 
     parser.add_argument('--loss_operation', default=True, type=bool,
@@ -63,6 +64,21 @@ def get_args_parser():
                         help='train bbox loss')
 
     return parser
+
+
+def plot_loss(losses, lr):
+    epochs = range(0, int(len(losses)/10))
+    sample_loss = []
+    for i, loss in enumerate(losses):
+        if i % 10 == 0:
+            sample_loss.append(loss)
+
+    plt.plot(epochs, sample_loss, 'b', label='Training loss')
+    plt.title('Training loss of supervised learning, lr=' + str(lr))
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
 
 
 def compare_two_frame(frame1, frame2):
@@ -223,27 +239,43 @@ class Learner:
 
     def __init__(self, args):
         self.args = args
+        self.device = torch.device("cpu")
         if args.gpu_training:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        else:
-            self.device = torch.device("cpu")
+
         self.model = RLTR()
         if args.load_pretrained_model:
             self.model.load_state_dict(torch.load(INIT_MODEL_PATH))
         if args.keep_training:
             self.model.load_state_dict(torch.load(MODEL_PATH))
 
+        self.matcher = build_matcher(args)
         self.optimizer = Adam(self.model.parameters(), lr=args.lr)
+        _losses = ['boxes']
+        self.criterion = SetCriterion(losses=_losses, matcher=self.matcher, device=self.device)
         self.trajectories = ""
 
+        self.w = 720
+        self.h = 576
 
-    def train_one_epoch(self, model, trajectories, frames, optimizer, device, epoch):
+    def bbox_rescale(self, input):
+        for inp in input:
+            for frame in inp:
+                for box in frame:
+                    box[0] = box[0] / self.w
+                    box[1] = box[1] / self.h
+                    box[2] = box[2] / self.w
+                    box[3] = box[3] / self.h
+        return input
+
+
+    def train_one_batch(self, model, criterion, trajectories, frames, optimizer, device):
         model.train()
+        metric_logger = MetricLogger(delimiter="  ")
         length = len(trajectories[0][0])
         batch_outputs = []
         obss = []
         envs = []
-        targets = trajectories
         for frame in frames:
             env = gym.make('gym_rltracking:rltracking-v0')
             # self.env.init_view(args.view)
@@ -252,9 +284,22 @@ class Learner:
             obss.append(obs)
             envs.append(env)
 
+        # CrossEntropyLoss for output operations and sort output
+        # and l1 loss and giou loss for bbox prediction
+        op_targets = []
+        bbox_targets = []
+        for trajectory in trajectories:
+            op, bbox = trajectory
+            op_targets.append(op)
+            bbox_targets.append(bbox)
+        op_targets = torch.Tensor(op_targets).long().permute(1, 0, 2).to(self.device)
+        bbox_targets = torch.Tensor(bbox_targets).permute(1, 0, 2, 3).to(self.device)
+
+        bbox_targets = self.bbox_rescale(bbox_targets)
+
         for i in range(length):
             policy_logits = model(obss)
-            batch_outputs.append(policy_logits)
+            # batch_outputs.append(policy_logits)
             obss = []
             for j, env in enumerate(envs):
                 op_action = Categorical(logits=policy_logits['operations'][j]).sample()
@@ -264,15 +309,34 @@ class Learner:
                 obs, reward, done, _ = env.step(action)
                 obss.append(obs)
 
-        # print(batch_outputs)
-        pass
+            # crossentropy loss
+            input = policy_logits['operations'].clone().permute(0, 2, 1)
+            op_target = op_targets[i]
+            crossentropyloss = CrossEntropyLoss()
+            loss = crossentropyloss(input, op_target)
+
+            # l1 and giou loss
+            input = policy_logits['pred_boxes']
+            bbox_target = bbox_targets[i]
+            loss_dict = criterion(input, bbox_target)
+
+            # loss = loss_dict['loss_bbox']
+            loss = loss + loss_dict['loss_bbox'] + loss_dict['loss_giou']
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            metric_logger.update(loss=loss)
+
+        return metric_logger.loss.value
 
     def run(self):
         print("Loading tracking result from SORT...")
         tracking_results = load_tracking_result()
         # detection_results = load_detection_result()
 
-        # self.model.to(self.device)
+        self.model.to(self.device)
         epoch = 0
         frame_count = 0
         sources = ['ADL-Rundle-6', 'ADL-Rundle-8', 'ETH-Bahnhof', 'ETH-Pedcross2', 'ETH-Sunnyday', 'KITTI-13', 'KITTI-17', 'PETS09-S2L1', 'TUD-Campus', 'TUD-Stadtmitte', 'Venice-2']
@@ -283,8 +347,16 @@ class Learner:
         while frame_count < total_frames:
             length = 10
             trajectories, frames = sample_random_batch(tracking_results, BATCH_SIZE, source, length)
-            loss = self.train_one_epoch(self.model, trajectories, frames, self.optimizer, self.device, epoch)
-            # losses.append(loss)
+            loss = self.train_one_batch(self.model, self.criterion, trajectories, frames, self.optimizer, self.device)
+            losses.append(loss)
+
+            print("train step: ", int(frame_count / length), ", Averaged stats: ", str(loss))
+            frame_count += length
+
+        print("Saving model...")
+        torch.save(self.model.state_dict(), MODEL_PATH)
+
+        plot_loss(losses, self.optimizer.param_groups[0]['lr'])
 
 
 def main(args):

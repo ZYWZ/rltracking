@@ -69,14 +69,19 @@ class RLTR(nn.Module):
             entities.append(entity)
             masks.append(mask)
 
-        detections = torch.Tensor(detections).long()
-        entities = torch.Tensor(entities).long()
-        masks = torch.Tensor(masks)
+        # detections = torch.Tensor(detections).long()
+        # entities = torch.Tensor(entities).long()
+        # masks = torch.Tensor(masks)
+
+        detections = torch.stack(detections)
+        entities = torch.stack(entities)
+        masks = torch.stack(masks)
+
         cur_emb = self.detection_embedder(detections).flatten(start_dim=2)
-        entitity_emb = self.entity_embedder(entities).flatten(start_dim=2)
+        entity_emb = self.entity_embedder(entities).flatten(start_dim=2)
 
         src1 = self.pos_encoder(cur_emb).permute(1, 0, 2)
-        src2 = self.pos_encoder(entitity_emb).permute(1, 0, 2)
+        src2 = self.pos_encoder(entity_emb).permute(1, 0, 2)
 
         det_encod = self.detection_encoder(src1, src_key_padding_mask=masks)
         ent_encod = self.entity_encoder(src2)
@@ -96,11 +101,11 @@ class RLTR(nn.Module):
 
 class PositionalEncoding(nn.Module):
 
-    def __init__(self, d_model, batch_size=8, dropout=0.1, max_len=5000):
+    def __init__(self, d_model, max_batch_size=32, dropout=0.1, max_len=5000):
         super(PositionalEncoding, self).__init__()
         self.dropout = nn.Dropout(p=dropout)
 
-        pe = torch.zeros(batch_size, max_len, d_model)
+        pe = torch.zeros(max_batch_size, max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, :, 0::2] = torch.sin(position * div_term)
@@ -109,7 +114,7 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + self.pe[:, :x.size(1), :]
+        x = x + self.pe[:x.size(0), :x.size(1), :]
         return self.dropout(x)
 
 

@@ -55,15 +55,28 @@ def _get_detection(view="001"):
     return result
 
 
-def _get_gt(view="001"):
-    gt = []
-    filepath = BASEPATH + view + "/View_" + view + ".txt"
-    with open(filepath) as f:
-        content = f.read().splitlines()
-    for c in content:
-        c_list = c.split(" ")
-        gt.append(c_list)
-    return gt
+# def _get_gt(view="001"):
+#     gt = []
+#     filepath = BASEPATH + view + "/View_" + view + ".txt"
+#     with open(filepath) as f:
+#         content = f.read().splitlines()
+#     for c in content:
+#         c_list = c.split(" ")
+#         gt.append(c_list)
+#     return gt
+
+def get_gt():
+    _, directories, _ = next(walk(INPUT_PATH_TRAIN))
+    results = []
+    for directory in directories:
+        file = os.path.join(INPUT_PATH_TRAIN, directory, "gt", "gt.txt")
+        with open(file) as f:
+            content = f.readlines()
+        content = [x.strip() for x in content]
+        results.append(content)
+
+    output = dict(zip(directories, results))
+    return output
 
 
 def _exist(obj):
@@ -105,7 +118,7 @@ class RltrackingEnv(gym.Env):
         self.last_bboxes = []
 
         self.number = 2
-        # self.gt_all = _get_gt()
+        self.gt_all = get_gt()
         self.det_all = load_detection_result()
         self.gt = []
 
@@ -133,19 +146,6 @@ class RltrackingEnv(gym.Env):
         self.obj_memories = []
         for i in range(self.obj_count):
             self.obj_memories.append(0)
-
-        # self.obj_count = 0
-        # result = self.det_all
-        # positions = []
-        # for line in result:
-        #     if int(line[0]) == start_frame:
-        #         temp = []
-        #         for i in line[1:]:
-        #             temp.append(float(i))
-        #         positions.append(temp)
-        #         self.obj_count += 1
-        #
-        # self.obs_memory = torch.Tensor(positions)
 
         self.step_count = 0
         self.frame_count = start_frame
@@ -404,9 +404,9 @@ class RltrackingEnv(gym.Env):
         # next_frame = torch.as_tensor(result)
 
         obs = {
-            'next_frame': result,
-            'mask': mask,
-            'locations': self.obj_locations,
+            'next_frame': torch.Tensor(result).long().to(self.device),
+            'mask': torch.Tensor(mask).to(self.device) > 0,
+            'locations': torch.Tensor(self.obj_locations).long().to(self.device),
         }
 
         # self.obs_memory = next_frame
@@ -431,15 +431,27 @@ class RltrackingEnv(gym.Env):
     #                 result.append(gt)
     #         return result
 
-    def _get_current_gt(self):
+    # def _get_current_gt(self):
+    #     result = []
+    #     gt_all = self.gt_all
+    #     for gt in gt_all:
+    #         if int(gt[5]) == self.frame_count and int(gt[6]) == 0:
+    #             for i in range(1, 5):
+    #                 gt[i] = int(gt[i])
+    #             result.append(gt)
+    #     return result
+
+    def _get_current_gt(self, source="PETS09-S2L1"):
+        gt_all = self.gt_all[source]
         result = []
-        gt_all = self.gt_all
         for gt in gt_all:
-            if int(gt[5]) == self.frame_count and int(gt[6]) == 0:
-                for i in range(1, 5):
-                    gt[i] = int(gt[i])
+            gt = gt.split(',')
+            if int(gt[0]) == self.frame_count:
+                for i in range(len(gt)):
+                    gt[i] = int(float(gt[i]))
                 result.append(gt)
         return result
+
 
     # for output bounding box post-processing
     def box_cxcywh_to_xyxy(self, x):
@@ -456,16 +468,16 @@ class RltrackingEnv(gym.Env):
         return b
 
     def render_img(self, action):
-        bbox_action = action['pred_boxes'].detach().numpy()[0]
-        op_action = action['operations'].detach().numpy()[0]
+        bbox_action = action['pred_boxes'].detach().numpy()
+        op_action = action['operations'].detach().numpy()
 
         img = np.zeros((self.img_h, self.img_w, 3), np.uint8)
-        gts = self._get_current_gt()
+        gts = self._get_current_gt("PETS09-S2L1")
 
         # show gt of current frame
         for gt in gts:
-            start_point = (gt[1], gt[2])
-            end_point = (gt[3], gt[4])
+            start_point = (gt[2], gt[3])
+            end_point = (gt[2]+gt[4], gt[3]+gt[5])
             img = cv2.rectangle(img, start_point, end_point, (0, 0, 255), cv2.FILLED)
 
         # show next frame det result

@@ -32,6 +32,16 @@ from torch import nn
 # dist = Categorical(logits=torch.Tensor([[1,2,3,4],[1,2,3,4]]))
 # for i in range(20):
 #         print(dist.sample())
-src_key_padding_mask = torch.randint(0,2,(2, 4))
-print(src_key_padding_mask)
+x_input=torch.randn(2,4,16)
+print('x_input:\n',x_input)
+softmax_func=nn.Softmax(dim=1)
+soft_output=softmax_func(x_input)
+print('soft_output:\n',soft_output)
+y_target=torch.tensor([[1,1,0,1,1,1,1,0,1,1,1,1,0,1,1,2], [1,1,0,1,1,1,1,0,1,1,1,1,0,1,1,2]])
+print(y_target.shape)
+
+crossentropyloss=nn.CrossEntropyLoss()
+crossentropyloss_output=crossentropyloss(x_input,y_target)
+print('crossentropyloss_output:\n',crossentropyloss_output)
+
 

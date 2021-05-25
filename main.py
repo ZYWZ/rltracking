@@ -27,7 +27,7 @@ def compute_loss(obs, act, weights):
 if __name__ == "__main__":
     # create env
     env = gym.make("gym_rltracking:rltracking-v0")
-    env.init_view("001")
+    # env.init_view("001")
     # observation = env.reset()
     action = env.action_space.sample()
 
@@ -44,7 +44,7 @@ if __name__ == "__main__":
     #         print(name)
 
     # initiate objects according to first frame's detection
-    obs = env.initiate_obj(0)
+    obs = env.initiate_obj(10)
     # env.render_img()
 
     test_obs = torch.randn(8, 516)
@@ -57,18 +57,18 @@ if __name__ == "__main__":
         'number': test_number
     }
 
-    outputs = model(obs)
+    outputs = model([obs])
     # print(outputs['pred_boxes'].detach().numpy()[0])
 
     # obs, reward, done, _ = env.step(outputs['pred _boxes'].numpy()[0])
     # obs, reward, done, _ = env.step([np.array([0, 0, 0, 0]), np.array([0, 0, 0, 0])])
 
     for i in range(500):
-        outputs = model(obs)
+        outputs = model([obs])
         op_action = Categorical(logits=outputs['operations']).sample()
         bbox_action = outputs['pred_boxes']
-        action = {'pred_boxes': bbox_action,
-            'operations': op_action}
+        action = {'pred_boxes': bbox_action[0],
+            'operations': op_action[0]}
         obs, reward, done, _ = env.step(action)
         print(op_action)
         env.render_img(action)
