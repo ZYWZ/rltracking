@@ -14,8 +14,8 @@ class RLTR(nn.Module):
     def __init__(self, obs_space=None, action_space=None, hidden_dim=256, nheads=8, num_encoder_layers=3, num_decoder_layers=3):
         super().__init__()
 
-        self.detection_embedder = Embedder(1200, 64)
-        self.entity_embedder = Embedder(1200, 64)
+        self.detection_embedder = Embedder(3000, 64)
+        self.entity_embedder = Embedder(3000, 64)
         self.operation_embedder = Embedder(4, 64)
 
         # the positional Encoding
@@ -29,7 +29,7 @@ class RLTR(nn.Module):
         self.transformer_decoder = TransformerDecoder(decoder_layer, num_decoder_layers)
 
         # the sequence to the decoder, target sequence
-        self.query_pos = nn.Parameter(torch.rand(16, hidden_dim))
+        self.query_pos = nn.Parameter(torch.rand(32, hidden_dim))
 
         # prediction heads, output the predicted offsets for each object (x, y, w, h)
         # self.linear_offset = nn.Linear(hidden_dim, 4)

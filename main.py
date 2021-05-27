@@ -27,6 +27,7 @@ def compute_loss(obs, act, weights):
 if __name__ == "__main__":
     # create env
     env = gym.make("gym_rltracking:rltracking-v0")
+    env.init_source("ADL-Rundle-6")
     # env.init_view("001")
     # observation = env.reset()
     action = env.action_space.sample()
@@ -37,25 +38,10 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load(PATH))
     # model.load_state_dict(torch.load(BACKUP_PATH))
 
-    # summary(model, (8,516))
-
-      # for name, param in model.named_parameters():
-    #     if param.requires_grad:
-    #         print(name)
 
     # initiate objects according to first frame's detection
     obs = env.initiate_obj(10)
     # env.render_img()
-
-    test_obs = torch.randn(8, 516)
-    test_location = [[0,0,0,0],[0,0,0,0]]
-    test_number = 2
-
-    test = {
-        'next_frame': test_obs,
-        'locations': test_location,
-        'number': test_number
-    }
 
     outputs = model([obs])
     # print(outputs['pred_boxes'].detach().numpy()[0])

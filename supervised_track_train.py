@@ -25,14 +25,14 @@ from torch.distributions.categorical import Categorical
 import matplotlib.pyplot as plt
 
 FINE_TUNING = False
-total_frames = 5000
+total_frames = 150000
 
 INIT_MODEL_PATH = "models/state_dict_rltr_init.pt"
 MODEL_PATH = "models/state_dict_rltr.pt"
 SORT_PATH = "datasets/SORT_Output"
 INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
 
-TRACKING_NUMBER = 16
+TRACKING_NUMBER = 32
 
 def get_args_parser():
     parser = argparse.ArgumentParser('RLTR tracker', add_help=False)
@@ -51,11 +51,11 @@ def get_args_parser():
                         help='whether to use gpu for training')
     parser.add_argument('--load_pretrained_model', default=False, type=bool,
                         help='whether to load pretrained model')
-    parser.add_argument('--keep_training', default=True, type=bool,
+    parser.add_argument('--keep_training', default=False, type=bool,
                         help='keep train the last model')
     parser.add_argument('--batch_size', default=8, type=int,
                         help='set the training batch size')
-    parser.add_argument('--lr', default=0.0001, type=float,
+    parser.add_argument('--lr', default=0.00001, type=float,
                         help='learning rate of the optimizer')
 
     parser.add_argument('--loss_operation', default=True, type=bool,
@@ -183,15 +183,22 @@ def get_trajectory(tracking_results, source, frame, length):
     return operations, bbox_outputs
 
 
-def sample_random_batch(tracking_results, batch_size, source, length):
+def sample_random_batch(tracking_results, batch_size, length):
+    sources = ['ADL-Rundle-6', 'ADL-Rundle-8', 'ETH-Bahnhof', 'ETH-Pedcross2', 'ETH-Sunnyday', 'KITTI-13', 'KITTI-17',
+               'PETS09-S2L1', 'TUD-Campus', 'TUD-Stadtmitte', 'Venice-2']
+    frames_mimits = [255, 654, 1000, 837, 354, 340, 145, 795, 71, 179, 600]
     trajectories = []
     frames = []
+    source_choices = []
     while len(trajectories) < batch_size:
-        frame = random.randint(0, 500)
+        source = random.choice(sources)
+        frame_limit = frames_mimits[sources.index(source)]
+        frame = random.randint(0, frame_limit - length)
         trajectory = get_trajectory(tracking_results, source, frame, length)
         trajectories.append(trajectory)
         frames.append(frame)
-    return trajectories, frames
+        source_choices.append(source)
+    return trajectories, frames, source_choices
 
 
 def load_tracking_result():
@@ -202,13 +209,16 @@ def load_tracking_result():
         names.append(file[:-4])
 
     results = []
-
+    frames = []
     for filename in filenames:
         file = os.path.join(SORT_PATH, filename)
+
         with open(file) as f:
             content = f.readlines()
         content = [x.strip() for x in content]
         results.append(content)
+        last_line = content[-1].split(',')
+        frames.append(int(last_line[0]))
 
     output = dict(zip(names, results))
 
@@ -219,12 +229,14 @@ def load_detection_result():
     path = INPUT_PATH_TRAIN
     _, directories, _ = next(walk(path))
     results = []
+
     for directory in directories:
         file = os.path.join(INPUT_PATH_TRAIN, directory, "det", "det.txt")
         with open(file) as f:
             content = f.readlines()
         content = [x.strip() for x in content]
         results.append(content)
+
 
     output = dict(zip(directories, results))
 
@@ -255,31 +267,63 @@ class Learner:
         self.criterion = SetCriterion(losses=_losses, matcher=self.matcher, device=self.device)
         self.trajectories = ""
 
-        self.w = 720
-        self.h = 576
+        self.img_w = 720
+        self.img_h = 576
 
-    def bbox_rescale(self, input):
-        for inp in input:
-            for frame in inp:
-                for box in frame:
-                    box[0] = box[0] / self.w
-                    box[1] = box[1] / self.h
-                    box[2] = box[2] / self.w
-                    box[3] = box[3] / self.h
-        return input
+    def init_source(self, source):
+        if source == "ADL-Rundle-1" or source == "ADL-Rundle-3" or source == "ADL-Rundle-6" or source == "ADL-Rundle-8":
+            self.img_w = 1920
+            self.img_h = 1080
+        if source == "AVG-TownCentre":
+            self.img_w = 1920
+            self.img_h = 1080
+        if source == "ETH-Crossing" or source == "ETH-Jelmoli" or source == "ETH-Linthescher" or source == "ETH-Bahnhof" or source == "ETH-Pedcross2":
+            self.img_w = 640
+            self.img_h = 480
+        if source == "KITTI-13":
+            self.img_w = 1242
+            self.img_h = 375
+        if source == "KITTI-16":
+            self.img_w = 1224
+            self.img_h = 370
+        if source == "KITTI-17":
+            self.img_w = 1224
+            self.img_h = 370
+        if source == "KITTI-19":
+            self.img_w = 1238
+            self.img_h = 374
+        if source == "PETS09-S2L1" or source == "PETS09-S2L2":
+            self.img_w = 720
+            self.img_h = 576
+        if source == "TUD-Crossing" or source == "TUD-Campus" or source == "TUD-Stadtmitte":
+            self.img_w = 640
+            self.img_h = 480
+        if source == "Venice-1" or source == "Venice-2":
+            self.img_w = 1920
+            self.img_h = 1080
+
+    def bbox_rescale(self, input, source):
+        self.init_source(source)
+        for frame in input:
+            for box in frame:
+                box[0] = box[0] / self.img_w
+                box[1] = box[1] / self.img_h
+                box[2] = box[2] / self.img_w
+                box[3] = box[3] / self.img_h
 
 
-    def train_one_batch(self, model, criterion, trajectories, frames, optimizer, device):
+    def train_one_batch(self, model, criterion, trajectories, frames, sources, optimizer):
         model.train()
         metric_logger = MetricLogger(delimiter="  ")
         length = len(trajectories[0][0])
         batch_outputs = []
         obss = []
         envs = []
-        for frame in frames:
+        for frame, source in zip(frames, sources):
             env = gym.make('gym_rltracking:rltracking-v0')
             # self.env.init_view(args.view)
             env.init_device(args.gpu_training)
+            env.init_source(source)
             obs = env.initiate_obj(frame)
             obss.append(obs)
             envs.append(env)
@@ -293,9 +337,12 @@ class Learner:
             op_targets.append(op)
             bbox_targets.append(bbox)
         op_targets = torch.Tensor(op_targets).long().permute(1, 0, 2).to(self.device)
-        bbox_targets = torch.Tensor(bbox_targets).permute(1, 0, 2, 3).to(self.device)
+        # bbox_targets = torch.Tensor(bbox_targets).permute(1, 0, 2, 3).to(self.device)
 
-        bbox_targets = self.bbox_rescale(bbox_targets)
+        for i, bbox_target in enumerate(bbox_targets):
+            self.bbox_rescale(bbox_target, sources[i])
+
+        bbox_targets = torch.Tensor(bbox_targets).permute(1, 0, 2, 3).to(self.device)
 
         for i in range(length):
             policy_logits = model(obss)
@@ -339,15 +386,13 @@ class Learner:
         self.model.to(self.device)
         epoch = 0
         frame_count = 0
-        sources = ['ADL-Rundle-6', 'ADL-Rundle-8', 'ETH-Bahnhof', 'ETH-Pedcross2', 'ETH-Sunnyday', 'KITTI-13', 'KITTI-17', 'PETS09-S2L1', 'TUD-Campus', 'TUD-Stadtmitte', 'Venice-2']
-        source = 'PETS09-S2L1'
         losses = []
         BATCH_SIZE = self.args.batch_size
 
         while frame_count < total_frames:
             length = 10
-            trajectories, frames = sample_random_batch(tracking_results, BATCH_SIZE, source, length)
-            loss = self.train_one_batch(self.model, self.criterion, trajectories, frames, self.optimizer, self.device)
+            trajectories, frames, sources = sample_random_batch(tracking_results, BATCH_SIZE, length)
+            loss = self.train_one_batch(self.model, self.criterion, trajectories, frames, sources, self.optimizer)
             losses.append(loss)
 
             print("train step: ", int(frame_count / length), ", Averaged stats: ", str(loss))

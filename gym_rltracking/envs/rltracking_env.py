@@ -15,6 +15,7 @@ from scipy.optimize import linear_sum_assignment
 
 BASEPATH = "datasets/PETS09/View_"
 INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
+INPUT_PATH_TEST = "datasets/2DMOT2015/test"
 VIEW = "001"
 
 
@@ -44,15 +45,15 @@ def load_detection_result():
     return output
 
 
-def _get_detection(view="001"):
-    result = []
-    filepath = BASEPATH + view + "/View_" + view + "_input.txt"
-    with open(filepath) as f:
-        content = f.read().splitlines()
-    for c in content:
-        c_list = c.split(",")
-        result.append(c_list)
-    return result
+# def _get_detection(view="001"):
+#     result = []
+#     filepath = BASEPATH + view + "/View_" + view + "_input.txt"
+#     with open(filepath) as f:
+#         content = f.read().splitlines()
+#     for c in content:
+#         c_list = c.split(",")
+#         result.append(c_list)
+#     return result
 
 
 # def _get_gt(view="001"):
@@ -92,7 +93,7 @@ class RltrackingEnv(gym.Env):
         self.frame_count = 0
         self.img_w = 720
         self.img_h = 576
-        self.obj_count = 16
+        self.obj_count = 32
         self.active_object = 0
         self.source = "PETS09-S2L1"
         action_list = []
@@ -134,9 +135,36 @@ class RltrackingEnv(gym.Env):
 
     def init_source(self, source):
         self.source = source
-        if source == "PETS09-S2L1":
+        if source == "ADL-Rundle-1" or source == "ADL-Rundle-3" or source == "ADL-Rundle-6" or source == "ADL-Rundle-8":
+            self.img_w = 1920
+            self.img_h = 1080
+        if source == "AVG-TownCentre":
+            self.img_w = 1920
+            self.img_h = 1080
+        if source == "ETH-Crossing" or source == "ETH-Jelmoli" or source == "ETH-Linthescher" or source == "ETH-Bahnhof" or source == "ETH-Pedcross2":
+            self.img_w = 640
+            self.img_h = 480
+        if source == "KITTI-13":
+            self.img_w = 1242
+            self.img_h = 375
+        if source == "KITTI-16":
+            self.img_w = 1224
+            self.img_h = 370
+        if source == "KITTI-17":
+            self.img_w = 1224
+            self.img_h = 370
+        if source == "KITTI-19":
+            self.img_w = 1238
+            self.img_h = 374
+        if source == "PETS09-S2L1" or source == "PETS09-S2L2":
             self.img_w = 720
             self.img_h = 576
+        if source == "TUD-Crossing" or source == "TUD-Campus" or source == "TUD-Stadtmitte":
+            self.img_w = 640
+            self.img_h = 480
+        if source == "Venice-1" or source == "Venice-2":
+            self.img_w = 1920
+            self.img_h = 1080
 
     def initiate_obj(self, start_frame, view="001"):
         self.obj_locations = []
@@ -173,6 +201,17 @@ class RltrackingEnv(gym.Env):
         for i, mem in enumerate(self.obj_memories):
             self.obj_memories[i] = op_action[i]
 
+        # for obj in self.obj_locations:
+        #     print("-----------------------")
+        #     print(obj)
+        #     # obj[0] = (obj[0] / self.img_w) * 1000
+        #     # obj[1] = (obj[1] / self.img_h) * 1000
+        #     # obj[2] = (obj[2] / self.img_w) * 1000
+        #     # obj[3] = (obj[3] / self.img_h) * 1000
+        #     print(obj)
+        #     print("-----------------------")
+
+
     def step(self, action):
         # directly update the objects' location according to the actions
         bbox_action = action['pred_boxes'].cpu().detach().numpy()
@@ -188,6 +227,7 @@ class RltrackingEnv(gym.Env):
         done = False
 
         obs = self._get_obs()
+
 
         self.step_count += 1
         self.frame_count += 1
@@ -397,12 +437,18 @@ class RltrackingEnv(gym.Env):
             box[2] = box[2] / self.img_w * 1000
             box[3] = box[3] / self.img_h * 1000
 
+        # for obj in self.obj_locations:
+        #     obj[0] = obj[0] / self.img_w * 1000
+        #     obj[1] = obj[1] / self.img_h * 1000
+        #     obj[2] = obj[2] / self.img_w * 1000
+        #     obj[3] = obj[3] / self.img_h * 1000
+
+
         for i in range(self.obj_count - len(result)):
             result.append([0, 0, 0, 0])
             mask.append(0)
 
         # next_frame = torch.as_tensor(result)
-
         obs = {
             'next_frame': torch.Tensor(result).long().to(self.device),
             'mask': torch.Tensor(mask).to(self.device) > 0,
@@ -472,7 +518,7 @@ class RltrackingEnv(gym.Env):
         op_action = action['operations'].detach().numpy()
 
         img = np.zeros((self.img_h, self.img_w, 3), np.uint8)
-        gts = self._get_current_gt("PETS09-S2L1")
+        gts = self._get_current_gt(self.source)
 
         # show gt of current frame
         for gt in gts:
@@ -480,44 +526,35 @@ class RltrackingEnv(gym.Env):
             end_point = (gt[2]+gt[4], gt[3]+gt[5])
             img = cv2.rectangle(img, start_point, end_point, (0, 0, 255), cv2.FILLED)
 
-        # show next frame det result
-        # result = self.det_all
-        # next_frame = self.frame_count + 1
-        # new_boxes = []
-        # for line in result:
-        #     if int(line[0]) == next_frame:
-        #         temp = []
-        #         for i in line[1:]:
-        #             temp.append(float(i))
-        #         new_boxes.append(temp)
+        _add = 0
+        _keep = 0
+        _remove = 0
+        for act in op_action:
+            if act == 1:
+                _add += 1
+            elif act == 2:
+                _keep += 1
+            elif act == 3:
+                _remove += 1
 
-        # match next frame result to last frame result, if
-        # result = self._match_bbox(new_boxes)
-        #
-        # count = 0
-        # for det in result:
-        #     start_point = (int(det[0]), int(det[1]))
-        #     end_point = (int(det[2]), int(det[3]))
-        #     img = cv2.rectangle(img, start_point, end_point, (0, 255, 0), cv2.FILLED)
-        #     count += 1
-        #     cv2.putText(img, str(count),
-        #                 start_point,
-        #                 cv2.FONT_HERSHEY_SIMPLEX,
-        #                 1,
-        #                 (255, 255, 255),
-        #                 2)
-
-        # show current det (self.obs_memory)
-        # for det in self.obs_memory:
-        #     start_point = (int(det[0]*self.img_w), int(det[1]*self.img_h))
-        #     end_point = (int(det[2]*self.img_w), int(det[3]*self.img_h))
-        #     img = cv2.rectangle(img, start_point, end_point, (255, 255, 0), cv2.FILLED)
-
-        # show output of the model
-        # for i, obj_rescaled in enumerate(self.rescaled_location):
-        #     start_point = (int(obj_rescaled[0]), int(obj_rescaled[1]))
-        #     end_point = (int(obj_rescaled[2]), int(obj_rescaled[3]))
-        #     img = cv2.rectangle(img, start_point, end_point, (255, 0, 0), cv2.FILLED)
+        cv2.putText(img, "add: "+str(_add),
+                    (550, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 255),
+                    2)
+        cv2.putText(img, "keep: " + str(_keep),
+                    (550, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 255),
+                    2)
+        cv2.putText(img, "Remove: " + str(_remove),
+                    (550, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 255),
+                    2)
 
         for i, act in enumerate(bbox_action):
             if op_action[i] != 0:
