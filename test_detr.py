@@ -23,6 +23,9 @@ import requests
 import torch
 import torchvision.transforms as T
 
+import os
+from os import walk
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
@@ -108,12 +111,7 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     return parser
 
-# standard PyTorch mean-std input image normalization
-transform = T.Compose([
-    T.Resize(800),
-    T.ToTensor(),
-    T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
+
 
 # COCO classes
 CLASSES = [
@@ -147,12 +145,12 @@ def box_cxcywh_to_xyxy(x):
 def rescale_bboxes(out_bbox, size):
     img_w, img_h = size
     b = box_cxcywh_to_xyxy(out_bbox)
-    b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
+    b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32).to("cuda")
     return b
 
-def detect(im, model, transform):
+def detect(im, model, transform, device):
     # mean-std normalize the input image (batch-size: 1)
-    img = transform(im).unsqueeze(0)
+    img = transform(im).unsqueeze(0).to(device)
 
     # demo model only support by default images with aspect ratio between 0.5 and 2
     # if you want to use images with an aspect ratio outside this range
@@ -171,7 +169,7 @@ def detect(im, model, transform):
     return probas[keep], bboxes_scaled
 
 
-def plot_results(pil_img, prob, boxes):
+def plot_results(pil_img, prob, boxes, name):
     plt.figure(figsize=(16,10))
     plt.imshow(pil_img)
     ax = plt.gca()
@@ -183,7 +181,10 @@ def plot_results(pil_img, prob, boxes):
         ax.text(xmin, ymin, text, fontsize=15,
                 bbox=dict(facecolor='yellow', alpha=0.5))
     plt.axis('off')
-    plt.show()
+    # plt.show()
+
+    plt.savefig('detr_result/' + name)
+
 
 def main(args):
     print(args)
@@ -193,16 +194,21 @@ def main(args):
     # for k, v in pretrained.items():
     #     print(k)
 
+    # standard PyTorch mean-std input image normalization
+    transform = T.Compose([
+        T.Resize(800),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
     model, criterion, postprocessors = build_model(args)
+    model.to(device)
     model_dict = model.state_dict()
 
     for k, v in model.state_dict().items():
         if k not in pretrained_dict:
-            print(k)
+            print(k, " not in pretrained model!")
 
-    for k, v in pretrained_dict.items():
-        if k not in model_dict:
-            print(k)
 
     # 1. filter out unnecessary keys
     pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
@@ -211,12 +217,20 @@ def main(args):
     # 3. load the new state dict
     model.load_state_dict(model_dict)
 
-    url = 'http://images.cocodataset.org/val2017/000000039769.jpg'
-    im = Image.open(requests.get(url, stream=True).raw)
+    # url = 'http://images.cocodataset.org/val2017/000000039769.jpg'
+    path = "datasets/2DMOT2015/train/PETS09-S2L1/img1"
+    names = []
+    _, _, filenames = next(walk(path))
+    for file in filenames:
+        names.append(file)
+    for name in names:
+        print(name)
+        img = "datasets/2DMOT2015/train/PETS09-S2L1/img1/" + name
+        im = Image.open(img)
 
-    scores, boxes = detect(im, model, transform)
+        scores, boxes = detect(im, model, transform, device)
 
-    plot_results(im, scores, boxes)
+        plot_results(im, scores, boxes, name)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
