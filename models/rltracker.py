@@ -15,7 +15,7 @@ class RLTracker(nn.Module):
                  num_decoder_layers=3):
         super().__init__()
         self.position_embedding = PositionalEncoding()
-        self.pos_embed = nn.Embedding(1024, 128)
+        self.pos_embed = nn.Embedding(1200, 128)
 
         self.empty_template = nn.Parameter(torch.rand((1, 1, 1024)))
 

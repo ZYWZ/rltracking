@@ -41,6 +41,7 @@ def train(env_name='CartPole-v0', hidden_sizes=[32], lr=1e-2,
 
     # make loss function whose gradient, for the right data, is policy gradient
     def compute_loss(obs, act, weights):
+        aa = get_policy(obs)
         logp = get_policy(obs).log_prob(act)
         return -(logp * weights).mean()
 

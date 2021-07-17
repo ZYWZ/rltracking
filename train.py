@@ -1,7 +1,8 @@
 import torch
 import argparse
 import numpy as np
-from PIL import Image
+import random
+import torch_ac
 from torch.optim import Adam
 
 from models.rltracker import build_agent
@@ -11,7 +12,7 @@ import torchvision.transforms as T
 from utils.vpg import VpgAlgo
 from torch.distributions.categorical import Categorical
 
-# INIT_MODEL_PATH = "models/state_dict_rltr_init.pt"
+INIT_MODEL_PATH = "models/state_dict_rltr_RL_init.pt"
 MODEL_PATH = "models/state_dict_rltr_RL.pt"
 test_img = "datasets/2DMOT2015/train/PETS09-S2L1/img1/000001.jpg"
 
@@ -118,6 +119,35 @@ def get_args_parser():
 
     return parser
 
+def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
+    obs = env.initiate_env(start_frame)
+    ep_obs = []
+    ep_actions = []
+    for i in range(train_length):
+        # action = torch.Tensor([[0, 0, 0, 0, 0, 0, 0, 0]]).long()
+        ep_obs.append(obs)
+        logits = agent(obs)
+        action = Categorical(logits=logits).sample()
+        ep_actions.append(action)
+        obs, reward, end, _ = env.step(action)
+
+        if end is True:
+            break
+
+    final_reward = torch.as_tensor(env.reward(), dtype=torch.float32)
+
+    for i in range(len(ep_obs)):
+        optimizer.zero_grad()
+        logits = agent(ep_obs[i])
+        policy = Categorical(logits=logits)
+        logp = policy.log_prob(ep_actions[i])
+        loss = -(logp * final_reward).mean()
+
+        loss.backward()
+        optimizer.step()
+
+    print("reward: ", final_reward.numpy())
+
 def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
           epochs=1, batch_size=10, render=False, total_frames=500):
     # make environment, check spaces, get obs / act dims
@@ -129,40 +159,53 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
     #     "This example only works for envs with Tuple action spaces."
     # assert isinstance(env.observation_space, Dict), \
     #     "This example only works for envs with Dict state spaces."
+    source = 'PETS09-S2L1'
+
+    extractor, agent = build_agent(args)
+    agent.load_state_dict(torch.load(INIT_MODEL_PATH))
+    extractor.eval()
+    agent.eval()
+    optimizer = Adam(agent.parameters(), lr=0.00001)
+    env.set_extractor(extractor)
+    for i in range(500):
+        print("ep ", i)
+        start_frame = random.randint(1, 760)
+        train_length = 30
+        train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
+
+    print("Saving model...")
+    torch.save(agent.state_dict(), MODEL_PATH)
+
+
+def test():
+    env = gym.make('gym_rltracking:rltracking-v1')
+    env.init_source("PETS09-S2L1")
+
+    # assert isinstance(env.action_space, Tuple), \
+    #     "This example only works for envs with Tuple action spaces."
+    # assert isinstance(env.observation_space, Dict), \
+    #     "This example only works for envs with Dict state spaces."
 
     extractor, agent = build_agent(args)
     extractor.eval()
-    agent.eval()
     env.set_extractor(extractor)
-    obs = env.initiate_env()
-    # logits = agent(obs)
-    # action = Categorical(logits).sample()
-    for i in range(10):
-        action = torch.Tensor([[0, 0, 0, 1]]).long()
-        obs, reward = env.step(action)
-        env.printTrack()
-
-    # algo = VpgAlgo(env=env, model=agent, device=device, num_frames=10, lr=1e-4)
-
-    num_frames = 0
-
-    epoch = 0
-
-    # while num_frames < total_frames:
-    #     frame = random.randint(0, 10)
-    #     exps = algo.collect_experiences(frame)
-    #     logs = algo.update_parameters(exps)
-    #     print("epoch ", epoch, logs)
-    #
-    #     epoch += 1
-    #     num_frames += 10
-    #
-    # print("Saving model...")
-    # torch.save(agent.state_dict(), MODEL_PATH)
+    agent.eval()
+    agent.load_state_dict(torch.load(MODEL_PATH))
+    obs = env.initiate_env(1)
+    for i in range(30):
+        logits = agent(obs)
+        action = Categorical(logits).sample()
+        print(action)
+        obs, reward, end, _ = env.step(action)
+        if end is True:
+            break
+        # env.render(mode='printTrack')
+    print(env.reward())
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('RLTracker args', parents=[get_args_parser()])
     args = parser.parse_args()
 
-    train(args)
+    # train(args)
+    test()
