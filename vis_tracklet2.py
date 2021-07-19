@@ -19,7 +19,7 @@ class MainWindow():
         imgs = "datasets/2DMOT2015/train/PETS09-S2L1/img1"
         filenames = next(walk(imgs), (None, None, []))[2]
         self.pics = []
-        for filename in filenames[:250]:
+        for filename in filenames[389:550]:
             self.pics.append(filename)
             img = os.path.join(imgs, filename)
             img = ImageTk.PhotoImage(Image.open(img))

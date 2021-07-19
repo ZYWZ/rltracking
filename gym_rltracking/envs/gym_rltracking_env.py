@@ -71,7 +71,9 @@ class GymRltrackingEnv(gym.Env):
         self.source = "PETS09-S2L1"
         self.train_mode = True
         self.obj_count = 0
-        self.step_count = 1
+        self.step_count = 0
+        self.start_frame = 1
+        self.frame = 1
         self.img_w = 720
         self.img_h = 576
         action_list = []
@@ -137,8 +139,10 @@ class GymRltrackingEnv(gym.Env):
     def initiate_env(self, start_frame):
         self.tracks = []
         self.objects = []
-        self.step_count = start_frame
-        det, feat = self.get_detection(self.step_count)
+        self.step_count = 0
+        self.start_frame = start_frame
+        self.frame = start_frame
+        det, feat = self.get_detection(self.frame)
         obj_count = len(det)
         feature = feat
         for i in range(obj_count):
@@ -146,7 +150,7 @@ class GymRltrackingEnv(gym.Env):
             new_obj.update(det[i], feature[i])
             self.objects.append(new_obj)
             track = RLTrack()
-            track.init_track(self.step_count, new_obj)
+            track.init_track(self.frame, new_obj)
             self.tracks.append(track)
 
         return self.gen_obs()
@@ -191,7 +195,7 @@ class GymRltrackingEnv(gym.Env):
                 new_obj.update(det_box_copy[0], det_feat_copy[0])
                 self.objects.append(new_obj)
                 track = RLTrack()
-                track.init_track(self.step_count, new_obj)
+                track.init_track(self.frame, new_obj)
                 self.tracks.append(track)
                 det_box_copy.pop(0)
                 det_feat_copy.pop(0)
@@ -204,7 +208,7 @@ class GymRltrackingEnv(gym.Env):
             if obj in block_list:
                 track.update_track()
             if obj in remove_list:
-                track.end_track(self.step_count)
+                track.end_track(self.frame)
 
     def resize_roi(self, roi):
         w = self.img_w
@@ -274,12 +278,13 @@ class GymRltrackingEnv(gym.Env):
     # update objects in env, according to action
     def step(self, action):
         self.step_count += 1
+        self.frame += 1
         end = False
         obs = {}
         boxes, feat = self.get_detection_memory()
         self.update_objects(action, boxes, feat)
         # reward = self.reward()
-        reward = 0
+        reward = self.reward()
         if len(self.objects) <= 0:
             end = True
         else:
@@ -288,7 +293,7 @@ class GymRltrackingEnv(gym.Env):
         return obs, reward, end, {}
 
     def reset(self):
-        self.step_count = 1
+        self.step_count = 0
         self.objects = []
         self.tracks = []
 
@@ -326,7 +331,7 @@ class GymRltrackingEnv(gym.Env):
         result = []
         for gt in self.gt_result:
             line = gt.split(',')
-            if int(line[0]) <= self.step_count:
+            if self.start_frame <= int(line[0]) <= self.frame:
                 result.append(line)
         output = []
         for res in result:
@@ -370,7 +375,15 @@ class GymRltrackingEnv(gym.Env):
         self.generate_gt_for_reward()
         self.generate_track_result()
         mota = self.calculate_mota()
-        reward_mota = mota * self.step_count
+        reward_mota = mota
+
+        reward_remove_obj = 0
+
+        reward_add_obj = 0
+
+        reward_keep_obj = 0
+
+        reward_block_obj = 0
 
         boxes, _ = self.get_detection_memory()
         reward_obj_count = self.compare_objects(boxes)
@@ -388,7 +401,7 @@ class GymRltrackingEnv(gym.Env):
         locations = torch.Tensor(locations).cuda()
         feats = torch.Tensor(feats).cuda()
 
-        next_frame = self.step_count + 1
+        next_frame = self.frame + 1
         det, det_feat = self.get_detection(next_frame)
         self.detection_memory = (det, det_feat)
 
@@ -399,7 +412,7 @@ class GymRltrackingEnv(gym.Env):
         return det, det_feat, locations, feats
 
     def render(self, mode='human'):
-        print(self.step_count)
+        print(self.frame)
         if mode =='printTrack':
             for track in self.tracks:
                 print(track.track)
