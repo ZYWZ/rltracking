@@ -137,9 +137,10 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     for i in range(len(ep_obs)):
         optimizer.zero_grad()
         logits = agent(ep_obs[i])
-        policy = Categorical(logits=logits)
+        policy = Categorical(logits)
         logp = policy.log_prob(ep_actions[i])
-        loss = -(logp * torch.as_tensor(ep_rewards[i], dtype=torch.float32)).mean()
+        weight = torch.as_tensor(ep_rewards[i], dtype=torch.float32)
+        loss = -(logp * weight).mean()
 
         loss.backward()
         optimizer.step()
@@ -161,15 +162,15 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
     source = 'PETS09-S2L1'
 
     extractor, agent = build_agent(args)
-    agent.load_state_dict(torch.load(MODEL_PATH))
+    # agent.load_state_dict(torch.load(MODEL_PATH))
     extractor.eval()
     agent.eval()
-    optimizer = Adam(agent.parameters(), lr=0.00001)
+    optimizer = Adam(agent.parameters(), lr=0.0001)
     env.set_extractor(extractor)
-    for i in range(1000):
+    for i in range(100):
         print("ep ", i)
         start_frame = random.randint(1, 740)
-        train_length = 50
+        train_length = 30
         train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
 
     print("Saving model...")

@@ -367,15 +367,23 @@ class GymRltrackingEnv(gym.Env):
     def compare_objects(self, dets):
         det_count = len(dets)
         env_count = self.obj_count
-        return -abs(det_count - env_count)
+        if det_count == env_count:
+            return 1
+        else:
+            return -1
 
     def reward(self):
-        weight = [5, 3]
+        weight = [1, 1]
         # if self.step_count % 10 == 0:
         self.generate_gt_for_reward()
         self.generate_track_result()
         mota = self.calculate_mota()
-        reward_mota = mota
+        if mota >= 0.5:
+            reward_mota = 1
+        elif 0.3 < mota < 0.5:
+            reward_mota = 0
+        else:
+            reward_mota = -1
 
         reward_remove_obj = 0
 
