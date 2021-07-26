@@ -119,6 +119,14 @@ def get_args_parser():
 
     return parser
 
+
+def write_to_log(log):
+    with open('gym_rltracking/logs.txt', 'w') as f:
+        for item in log:
+            f.write(','.join(map(repr, item)))
+            f.write('\n')
+
+
 def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     obs = env.initiate_env(start_frame)
     ep_obs = []
@@ -128,6 +136,7 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
         ep_obs.append(obs)
         logits = agent(obs)
         action = Categorical(logits).sample()
+        # action = torch.Tensor([[0, 0, 0]])
         ep_actions.append(action)
         obs, reward, end, _ = env.step(action)
         ep_rewards.append(reward)
@@ -135,17 +144,19 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
             break
 
     for i in range(len(ep_obs)):
+        print(ep_actions)
         optimizer.zero_grad()
         logits = agent(ep_obs[i])
         policy = Categorical(logits)
         logp = policy.log_prob(ep_actions[i])
         weight = torch.as_tensor(ep_rewards[i], dtype=torch.float32)
-        loss = -(logp * weight).mean()
+        loss = -(logp * weight).sum()
 
         loss.backward()
         optimizer.step()
 
     print("reward: ", ep_rewards)
+    return ep_rewards
 
 
 def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
@@ -165,14 +176,18 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
     # agent.load_state_dict(torch.load(MODEL_PATH))
     extractor.eval()
     agent.eval()
-    optimizer = Adam(agent.parameters(), lr=0.0001)
+    optimizer = Adam(agent.parameters(), lr=0.00001)
     env.set_extractor(extractor)
+    logs = []
     for i in range(100):
         print("ep ", i)
         start_frame = random.randint(1, 740)
-        train_length = 30
-        train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
+        start_frame = 1
+        train_length = 20
+        rewards = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
+        logs.append(rewards)
 
+    write_to_log(logs)
     print("Saving model...")
     torch.save(agent.state_dict(), MODEL_PATH)
 

@@ -142,18 +142,75 @@ class GymRltrackingEnv(gym.Env):
         self.step_count = 0
         self.start_frame = start_frame
         self.frame = start_frame
-        det, feat = self.get_detection(self.frame)
-        obj_count = len(det)
-        feature = feat
-        for i in range(obj_count):
-            new_obj = RLObject()
-            new_obj.update(det[i], feature[i])
-            self.objects.append(new_obj)
-            track = RLTrack()
-            track.init_track(self.frame, new_obj)
-            self.tracks.append(track)
+        # det, feat = self.get_detection(self.frame)
+        # obj_count = len(det)
+        # feature = feat
+        # for i in range(obj_count):
+        #     new_obj = RLObject()
+        #     new_obj.update(det[i], feature[i])
+        #     self.objects.append(new_obj)
+        #     track = RLTrack()
+        #     track.init_track(self.frame, new_obj)
+        #     self.tracks.append(track)
 
         return self.gen_obs()
+
+    def update_env_objects(self, src_list, tgt_list):
+        for obj in tgt_list:
+            obj.set_block(True)
+        update_list = [box[0] for box in src_list]
+        obj_list = [obj.get_location() for obj in tgt_list]
+        src = torch.Tensor(update_list).cuda()
+        tgt = torch.Tensor(obj_list).cuda()
+
+        if src.shape[0] != 0 and tgt.shape[0] != 0:
+            ind_row, ind_col = _matcher(tgt, src)
+            for i, j in zip(ind_row, ind_col):
+                obj = tgt_list[i]
+                obj.update(src_list[j][0], src_list[j][1], self.frame)
+                obj.set_block(False)
+
+    def update(self, action):
+        action = action.detach().tolist()[0]
+        boxes, feats = self.get_detection_memory()
+
+        assert len(action) == len(boxes), "action list length not equal to detection numbers!"
+        assert len(action) == len(feats), "action list length not equal to detection feature numbers!"
+
+        add_list = []
+        update_current_list = []
+        update_old_list = []
+        for act, box, feat in zip(action, boxes, feats):
+            # new object
+            if act == 0:
+                # print("new object")
+                add_list.append((box, feat))
+            elif act == 1:
+                # print("update current")
+                update_current_list.append((box, feat))
+            elif act == 2:
+                # print("update old")
+                update_old_list.append((box, feat))
+
+        reveal_objects = []
+        blocked_objects = []
+        for obj in self.objects:
+            if obj.is_blocked():
+                blocked_objects.append(obj)
+            else:
+                reveal_objects.append(obj)
+
+        # update current object
+        self.update_env_objects(update_current_list, reveal_objects)
+
+        # update old object, turn them into current object
+        self.update_env_objects(update_old_list, blocked_objects)
+
+        # add new object
+        for obj, feat in add_list:
+            new_obj = RLObject()
+            new_obj.update(obj, feat, self.frame)
+            self.objects.append(new_obj)
 
     def update_objects(self, action, det_boxes, det_feat):
         det_box_copy = det_boxes.copy()
@@ -162,16 +219,24 @@ class GymRltrackingEnv(gym.Env):
         assert len(action) >= len(self.objects), "action list is shorter than objects in the environment!"
         update_list = []
         update_list_object = []
+        add_list = []
         remove_list = []
         block_list = []
-        for i, obj in enumerate(self.objects):
+        for i, obj in enumerate(det_boxes):
             if action[i] == 0:
-                update_list.append(obj.get_location())
-                update_list_object.append(obj)
+                # update_list.append(obj.get_location())
+                # update_list_object.append(obj)
+                update_list.append(obj)
+            if action[i] == 1:
+                add_list.append(obj)
             if action[i] == 2:
                 remove_list.append(obj)
-            if action[i] == 1 or action[i] == 3:
+            if action[i] == 3:
                 block_list.append(obj)
+
+        # env_obj = []
+        # for obj in self.objects:
+        #     env_obj.append(obj.get_location())
 
         # remove object
         for obj in remove_list:
@@ -180,7 +245,7 @@ class GymRltrackingEnv(gym.Env):
         # update object
         src = torch.Tensor(update_list).cuda()
         tgt = torch.Tensor(det_boxes).cuda()
-        if src.shape[0] != 0:
+        if src.shape[0] != 0 and tgt.shape[0] != 0:
             ind_row, ind_col = _matcher(src, tgt)
             for i, j in zip(ind_row, ind_col):
                 obj = self.objects[i]
@@ -204,9 +269,9 @@ class GymRltrackingEnv(gym.Env):
         for track in self.tracks:
             obj = track.get_object()
             if obj in update_list_object:
-                track.update_track()
+                track.update_track(self.frame)
             if obj in block_list:
-                track.update_track()
+                track.update_track(self.frame)
             if obj in remove_list:
                 track.end_track(self.frame)
 
@@ -277,18 +342,20 @@ class GymRltrackingEnv(gym.Env):
 
     # update objects in env, according to action
     def step(self, action):
-        self.step_count += 1
-        self.frame += 1
         end = False
         obs = {}
-        boxes, feat = self.get_detection_memory()
-        self.update_objects(action, boxes, feat)
+        # boxes, feat = self.get_detection_memory()
+        # self.update_objects(action, boxes, feat)
+        self.update(action)
         # reward = self.reward()
         reward = self.reward()
         if len(self.objects) <= 0:
             end = True
         else:
             obs = self.gen_obs()
+
+        self.step_count += 1
+        self.frame += 1
 
         return obs, reward, end, {}
 
@@ -325,7 +392,7 @@ class GymRltrackingEnv(gym.Env):
         # print(mm.io.render_summary(summary, formatters=mh.formatters, namemap=mm.io.motchallenge_metric_names))
         # print(summary.values[0][13])
 
-        return summary.values[0][13]
+        return summary.values[0]
 
     def generate_gt_for_reward(self):
         result = []
@@ -352,6 +419,16 @@ class GymRltrackingEnv(gym.Env):
             start_idx += 1
         self.write_to_file(result)
 
+    def generate_track_from_objects(self):
+        idx = 2001
+        result = []
+        for obj in self.objects:
+            for frame, loc in zip(obj.get_frames(), obj.get_history()):
+                line = [frame, idx, loc[0], loc[1], round(loc[2] - loc[0], 2), round(loc[3] - loc[1], 2), 1, -1, -1, -1]
+                result.append(line)
+            idx += 1
+        self.write_to_file(result)
+
     def write_gt_to_file(self, res):
         with open('gym_rltracking/envs/rltrack/gt/gt.txt', 'w') as f:
             for item in res:
@@ -373,11 +450,15 @@ class GymRltrackingEnv(gym.Env):
             return -1
 
     def reward(self):
-        weight = [1, 1]
+        weight = [1, 1, 1]
         # if self.step_count % 10 == 0:
         self.generate_gt_for_reward()
-        self.generate_track_result()
-        mota = self.calculate_mota()
+        self.generate_track_from_objects()
+        summary = self.calculate_mota()
+        idf1 = summary[0]
+        mota = summary[13]
+        motp = summary[14]
+
         if mota >= 0.5:
             reward_mota = 1
         elif 0.3 < mota < 0.5:
@@ -385,38 +466,37 @@ class GymRltrackingEnv(gym.Env):
         else:
             reward_mota = -1
 
-        reward_remove_obj = 0
-
-        reward_add_obj = 0
-
-        reward_keep_obj = 0
-
-        reward_block_obj = 0
+        if idf1 >= 0.5:
+            reward_idf1 = 1
+        elif 0.3 < idf1 < 0.5:
+            reward_idf1 = 0
+        else:
+            reward_idf1 = -1
 
         boxes, _ = self.get_detection_memory()
         reward_obj_count = self.compare_objects(boxes)
 
-        reward = weight[0] * reward_mota + weight[1] * reward_obj_count
+        reward = weight[0] * reward_mota + weight[1] * reward_idf1 + weight[2] * reward_obj_count
 
         return reward
 
     def gen_obs(self):
         locations = []
         feats = []
-        for obj in self.objects:
-            locations.append(obj.get_location())
-            feats.append(obj.get_feature())
-        locations = torch.Tensor(locations).cuda()
-        feats = torch.Tensor(feats).cuda()
+        # for obj in self.objects:
+        #     locations.append(obj.get_location())
+        #     feats.append(obj.get_feature())
+        # locations = torch.Tensor(locations).cuda()
+        # feats = torch.Tensor(feats).cuda()
 
-        next_frame = self.frame + 1
-        det, det_feat = self.get_detection(next_frame)
+        frame = self.frame
+        det, det_feat = self.get_detection(frame)
         self.detection_memory = (det, det_feat)
 
         det = torch.Tensor(det).cuda()
         det = self.resize_roi(det)
         det_feat = torch.Tensor(det_feat).cuda()
-        locations = self.resize_roi(locations)
+        # locations = self.resize_roi(locations)
         return det, det_feat, locations, feats
 
     def render(self, mode='human'):
@@ -431,10 +511,16 @@ class RLObject:
     def __init__(self):
         self.location = 0
         self.feature = None
+        self.block = False
+        self.frames = []
+        self.history = []
 
-    def update(self, location, feature):
+
+    def update(self, location, feature, frame):
         self.location = location
         self.feature = feature
+        self.frames.append(frame)
+        self.history.append(location)
 
     def get_state(self):
         return self.location, self.feature
@@ -445,6 +531,18 @@ class RLObject:
     def get_feature(self):
         return self.feature
 
+    def get_frames(self):
+        return self.frames
+
+    def get_history(self):
+        return self.history
+
+    def is_blocked(self):
+        return self.block
+
+    def set_block(self, block):
+        self.block = block
+
 
 class RLTrack:
     def __init__(self):
@@ -452,18 +550,21 @@ class RLTrack:
         self.end_frame = -1
         self.object = None
         self.track = []
+        self.frames = []
 
     def init_track(self, frame, obj):
         self.object = obj
         self.start_frame = frame
+        self.frames.append(frame)
         self.track.append(obj.get_location())
 
     def get_object(self):
         return self.object
 
-    def update_track(self):
+    def update_track(self, frame):
         assert self.object is not None, "no object in this track!"
         self.track.append(self.object.get_location())
+        self.frames.append(frame)
 
     def end_track(self, frame):
         self.end_frame = frame

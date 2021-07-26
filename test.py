@@ -125,7 +125,7 @@ def test():
     agent.eval()
     agent.load_state_dict(torch.load(MODEL_PATH))
     obs = env.initiate_env(400)
-    for i in range(100):
+    for i in range(10):
         logits = agent(obs)
         action = Categorical(logits).sample()
         print(action)
