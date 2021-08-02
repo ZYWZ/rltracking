@@ -8,13 +8,14 @@ from utils.box_ops import generalized_box_iou
 from scipy.optimize import linear_sum_assignment
 import torchvision.transforms as T
 import torch.nn.functional as F
-
+import configparser
 import motmetrics as mm
 import glob
 from collections import OrderedDict
 from pathlib import Path
 
-INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
+# INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
+INPUT_PATH_TRAIN = "datasets/MOT17/train"
 INPUT_PATH_TEST = "datasets/2DMOT2015/test"
 
 
@@ -68,14 +69,14 @@ def load_gt_result():
 
 class GymRltrackingEnv(gym.Env):
     def __init__(self):
-        self.source = "PETS09-S2L1"
+        self.source = None
         self.train_mode = True
         self.obj_count = 0
         self.step_count = 0
-        self.start_frame = 1
-        self.frame = 1
-        self.img_w = 720
-        self.img_h = 576
+        self.start_frame = -1
+        self.frame = -1
+        self.img_w = -1
+        self.img_h = -1
         action_list = []
 
         for i in range(self.obj_count):
@@ -88,13 +89,7 @@ class GymRltrackingEnv(gym.Env):
         self.detection_memory = None
 
         self.extractor = None
-
-        if self.train_mode:
-            self.det_result = load_detection_result()[self.source]
-            self.gt_result = load_gt_result()[self.source]
-        else:
-            print("Not implemented inference mode for env.init")
-            raise
+        self.act_reward = 0
 
     def inference(self):
         self.train_mode = False
@@ -135,6 +130,19 @@ class GymRltrackingEnv(gym.Env):
             self.img_w = 1920
             self.img_h = 1080
 
+        seqfile = os.path.join(INPUT_PATH_TRAIN, source, 'seqinfo.ini')
+        config = configparser.ConfigParser()
+        config.read(seqfile)
+        self.img_w = int(config.get('Sequence', 'imWidth'))
+        self.img_h = int(config.get('Sequence', 'imHeight'))
+
+        if self.train_mode:
+            self.det_result = load_detection_result()[self.source]
+            self.gt_result = load_gt_result()[self.source]
+        else:
+            print("Not implemented inference mode for env.init")
+            raise
+
     # initiate the objects in env, according to the first frame detection
     def initiate_env(self, start_frame):
         self.tracks = []
@@ -142,6 +150,7 @@ class GymRltrackingEnv(gym.Env):
         self.step_count = 0
         self.start_frame = start_frame
         self.frame = start_frame
+        self.detection_memory = self.get_detection(self.frame)
         # det, feat = self.get_detection(self.frame)
         # obj_count = len(det)
         # feature = feat
@@ -278,11 +287,20 @@ class GymRltrackingEnv(gym.Env):
     def resize_roi(self, roi):
         w = self.img_w
         h = self.img_h
-        roi[:, 0] = roi[:, 0] * 1066 / w
-        roi[:, 2] = roi[:, 2] * 1066 / w
-        roi[:, 1] = roi[:, 1] * 800 / h
-        roi[:, 3] = roi[:, 3] * 800 / h
-        return roi
+        resize_roi = roi.clone()
+        normalized_roi = roi.clone()
+
+        resize_roi[:, 0] = roi[:, 0] * 1066 / w
+        resize_roi[:, 2] = roi[:, 2] * 1066 / w
+        resize_roi[:, 1] = roi[:, 1] * 800 / h
+        resize_roi[:, 3] = roi[:, 3] * 800 / h
+
+        normalized_roi[:, 0] = roi[:, 0] / w
+        normalized_roi[:, 2] = roi[:, 2] / w
+        normalized_roi[:, 1] = roi[:, 1] / h
+        normalized_roi[:, 3] = roi[:, 3] / h
+
+        return normalized_roi, resize_roi
 
     def get_detection(self, frame):
         def get_index(frame):
@@ -324,13 +342,15 @@ class GymRltrackingEnv(gym.Env):
             img = transform(img).unsqueeze(0).cuda()
             pad = (1, 0)
             box_tensor = torch.Tensor(boxes)
-            box_tensor = self.resize_roi(box_tensor)
+            _, box_tensor = self.resize_roi(box_tensor)
             box_tensor = F.pad(box_tensor, pad, 'constant', 0).cuda()
             feat = self.extractor(box_tensor, img)
 
             copy = feat.detach().cpu().numpy().tolist()
             del feat
             torch.cuda.empty_cache()
+
+
         else:
             print("Not implemented inference mode for function env.get_next_detection()")
             raise
@@ -344,18 +364,21 @@ class GymRltrackingEnv(gym.Env):
     def step(self, action):
         end = False
         obs = {}
+
+        self.act_reward = self.action_reward(action)
         # boxes, feat = self.get_detection_memory()
         # self.update_objects(action, boxes, feat)
         self.update(action)
         # reward = self.reward()
+        self.step_count += 1
+        self.frame += 1
+        self.detection_memory = self.get_detection(self.frame)
         reward = self.reward()
+
         if len(self.objects) <= 0:
             end = True
         else:
             obs = self.gen_obs()
-
-        self.step_count += 1
-        self.frame += 1
 
         return obs, reward, end, {}
 
@@ -398,7 +421,7 @@ class GymRltrackingEnv(gym.Env):
         result = []
         for gt in self.gt_result:
             line = gt.split(',')
-            if self.start_frame <= int(line[0]) <= self.frame:
+            if self.start_frame <= int(line[0]) < self.frame:
                 result.append(line)
         output = []
         for res in result:
@@ -441,16 +464,44 @@ class GymRltrackingEnv(gym.Env):
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
 
-    def compare_objects(self, dets):
-        det_count = len(dets)
-        env_count = self.obj_count
-        if det_count == env_count:
-            return 1
-        else:
-            return -1
+    def get_frame_gt(self, frame):
+        result = 0
+        for gt in self.gt_result:
+            line = gt.split(',')
+            if frame == int(line[0]):
+                result += 1
+        return result
+
+    def compare_objects(self, gt_number):
+        env_count = len(self.objects)
+        return -abs(gt_number - env_count)
+        # if det_count == env_count:
+        #     return 1
+        # else:
+        #     return -1
+
+    def action_reward(self, action):
+        action = action.detach().tolist()[0]
+        block_act = 0
+        reveal_act = 0
+        for act in action:
+            if act == 1:
+                reveal_act += 1
+            elif act == 2:
+                block_act += 1
+
+        block_obj = 0
+        reveal_obj = 0
+        for obj in self.objects:
+            if obj.is_blocked():
+                block_obj += 1
+            else:
+                reveal_obj += 1
+
+        return -(abs(reveal_act - reveal_obj) + abs(block_act - block_obj))
 
     def reward(self):
-        weight = [1, 1, 1]
+        weight = [1, 1, 0, 0]
         # if self.step_count % 10 == 0:
         self.generate_gt_for_reward()
         self.generate_track_from_objects()
@@ -474,9 +525,10 @@ class GymRltrackingEnv(gym.Env):
             reward_idf1 = -1
 
         boxes, _ = self.get_detection_memory()
-        reward_obj_count = self.compare_objects(boxes)
+        gt_number = self.get_frame_gt(self.frame)
+        reward_obj_count = self.compare_objects(gt_number)
 
-        reward = weight[0] * reward_mota + weight[1] * reward_idf1 + weight[2] * reward_obj_count
+        reward = weight[0] * mota + weight[1] * idf1 + weight[2] * reward_obj_count + weight[3] * self.act_reward
 
         return reward
 
@@ -490,14 +542,18 @@ class GymRltrackingEnv(gym.Env):
         # feats = torch.Tensor(feats).cuda()
 
         frame = self.frame
-        det, det_feat = self.get_detection(frame)
+        det, det_feat = self.get_detection_memory()
         self.detection_memory = (det, det_feat)
 
         det = torch.Tensor(det).cuda()
-        det = self.resize_roi(det)
+        normed_det, det = self.resize_roi(det)
         det_feat = torch.Tensor(det_feat).cuda()
         # locations = self.resize_roi(locations)
-        return det, det_feat, locations, feats
+        obs = {
+            'det': det,
+            'det_feat': det_feat,
+        }
+        return obs
 
     def render(self, mode='human'):
         print(self.frame)

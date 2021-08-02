@@ -112,7 +112,7 @@ def get_args_parser():
 
 def test():
     env = gym.make('gym_rltracking:rltracking-v1')
-    env.init_source("PETS09-S2L1")
+    env.init_source("MOT17-04-FRCNN")
 
     # assert isinstance(env.action_space, Tuple), \
     #     "This example only works for envs with Tuple action spaces."
@@ -124,10 +124,9 @@ def test():
     env.set_extractor(extractor)
     agent.eval()
     agent.load_state_dict(torch.load(MODEL_PATH))
-    obs = env.initiate_env(400)
-    for i in range(10):
-        logits = agent(obs)
-        action = Categorical(logits).sample()
+    obs = env.initiate_env(1)
+    for i in range(100):
+        action, logp_a = agent(obs)
         print(action)
         obs, reward, end, _ = env.step(action)
         if end is True:

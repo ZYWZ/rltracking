@@ -4,7 +4,7 @@ import numpy as np
 import random
 from PIL import Image
 from torch.optim import Adam
-
+import matplotlib.pyplot as plt
 from models.rltracker import build_agent
 import gym
 import torchvision.transforms as T
@@ -126,16 +126,28 @@ def write_to_log(log):
             f.write(','.join(map(repr, item)))
             f.write('\n')
 
+def plot_reward(rewards, lr):
+    epochs = range(0, int(len(rewards)))
+
+    plt.plot(epochs, rewards, 'b', label='Training reward')
+    plt.title('Training reward of rltracker, lr=' + str(lr))
+    plt.xlabel('Steps')
+    plt.ylabel('Reward')
+    plt.legend()
+    plt.show()
+    plt.savefig('rewards.png')
+
 
 def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     obs = env.initiate_env(start_frame)
     ep_obs = []
     ep_actions = []
     ep_rewards = []
+    ep_logp = []
     for i in range(train_length):
         ep_obs.append(obs)
-        logits = agent(obs)
-        action = Categorical(logits).sample()
+        action, logp_a = agent(obs)
+        ep_logp.append(logp_a)
         # action = torch.Tensor([[0, 0, 0]])
         ep_actions.append(action)
         obs, reward, end, _ = env.step(action)
@@ -143,18 +155,26 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
         if end is True:
             break
 
+    # action = torch.Tensor([[0, 0, 0]])
+    # obs, reward, end, _ = env.step(action)
+    # action = torch.Tensor([[1, 1, 1, 1]])
+    # obs, reward, end, _ = env.step(action)
+    # action = torch.Tensor([[1, 1, 1]])
+    # obs, reward, end, _ = env.step(action)
+    # action = torch.Tensor([[1, 1, 1]])
+    # obs, reward, end, _ = env.step(action)
+
     for i in range(len(ep_obs)):
-        print(ep_actions)
+
         optimizer.zero_grad()
-        logits = agent(ep_obs[i])
-        policy = Categorical(logits)
-        logp = policy.log_prob(ep_actions[i])
+        _, logp_a = agent(ep_obs[i], ep_actions[i])
         weight = torch.as_tensor(ep_rewards[i], dtype=torch.float32)
-        loss = -(logp * weight).sum()
+        loss = -(logp_a * weight).sum()
 
         loss.backward()
         optimizer.step()
 
+    print(ep_actions)
     print("reward: ", ep_rewards)
     return ep_rewards
 
@@ -162,34 +182,43 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
 def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
           epochs=1, batch_size=10, render=False, total_frames=500):
     # make environment, check spaces, get obs / act dims
-
+    source = 'MOT17-04-FRCNN'
     env = gym.make(env_name)
-    env.init_source("PETS09-S2L1")
+    # env.init_source("PETS09-S2L1")
+    env.init_source(source)
 
     # assert isinstance(env.action_space, Tuple), \
     #     "This example only works for envs with Tuple action spaces."
     # assert isinstance(env.observation_space, Dict), \
     #     "This example only works for envs with Dict state spaces."
-    source = 'PETS09-S2L1'
-
+    lr = 0.00002
     extractor, agent = build_agent(args)
     # agent.load_state_dict(torch.load(MODEL_PATH))
     extractor.eval()
-    agent.eval()
-    optimizer = Adam(agent.parameters(), lr=0.00001)
+    agent.train()
+    optimizer = Adam(agent.parameters(), lr=lr)
     env.set_extractor(extractor)
     logs = []
-    for i in range(100):
+    rewards = []
+    for i in range(2000):
+        # check for stop criterion
+        average_latest_reward = -99
+        if i > 100:
+            average_latest_reward = np.mean(rewards[-100:])
+        if average_latest_reward > 1:
+            break
         print("ep ", i)
-        start_frame = random.randint(1, 740)
-        start_frame = 1
-        train_length = 20
-        rewards = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
-        logs.append(rewards)
+        # start_frame = random.randint(1, 740)
+        start_frame = 10
+        train_length = 5
+        reward = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
+        logs.append(reward)
+        rewards.append(np.mean(reward))
 
     write_to_log(logs)
     print("Saving model...")
     torch.save(agent.state_dict(), MODEL_PATH)
+    plot_reward(rewards, lr)
 
 
 if __name__ == "__main__":
