@@ -155,15 +155,6 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
         if end is True:
             break
 
-    # action = torch.Tensor([[0, 0, 0]])
-    # obs, reward, end, _ = env.step(action)
-    # action = torch.Tensor([[1, 1, 1, 1]])
-    # obs, reward, end, _ = env.step(action)
-    # action = torch.Tensor([[1, 1, 1]])
-    # obs, reward, end, _ = env.step(action)
-    # action = torch.Tensor([[1, 1, 1]])
-    # obs, reward, end, _ = env.step(action)
-
     for i in range(len(ep_obs)):
 
         optimizer.zero_grad()
@@ -182,7 +173,7 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
 def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
           epochs=1, batch_size=10, render=False, total_frames=500):
     # make environment, check spaces, get obs / act dims
-    source = 'MOT17-04-FRCNN'
+    source = 'PETS09-S2L1'
     env = gym.make(env_name)
     # env.init_source("PETS09-S2L1")
     env.init_source(source)
@@ -193,7 +184,7 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
     #     "This example only works for envs with Dict state spaces."
     lr = 0.00002
     extractor, agent = build_agent(args)
-    # agent.load_state_dict(torch.load(MODEL_PATH))
+    agent.load_state_dict(torch.load(MODEL_PATH))
     extractor.eval()
     agent.train()
     optimizer = Adam(agent.parameters(), lr=lr)
@@ -209,8 +200,8 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
             break
         print("ep ", i)
         # start_frame = random.randint(1, 740)
-        start_frame = 10
-        train_length = 5
+        start_frame = 1
+        train_length = 4
         reward = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
         logs.append(reward)
         rewards.append(np.mean(reward))

@@ -31,12 +31,7 @@ class MainWindow():
             img = os.path.join(imgs, filename)
             img = ImageTk.PhotoImage(Image.open(img))
             self.my_images.append(img)
-        # img1 = ImageTk.PhotoImage(Image.open("datasets/2DMOT2015/train/PETS09-S2L1/img1/000001.jpg"))
-        # img2 = ImageTk.PhotoImage(Image.open("datasets/2DMOT2015/train/PETS09-S2L1/img1/000002.jpg"))
-        # img3 = ImageTk.PhotoImage(Image.open("datasets/2DMOT2015/train/PETS09-S2L1/img1/000003.jpg"))
-        # self.my_images.append(img1)
-        # self.my_images.append(img2)
-        # self.my_images.append(img3)
+
         self.my_image_number = 0
 
         # set first image on canvas

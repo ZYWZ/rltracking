@@ -13,9 +13,10 @@ import motmetrics as mm
 import glob
 from collections import OrderedDict
 from pathlib import Path
+import uuid
 
-# INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
-INPUT_PATH_TRAIN = "datasets/MOT17/train"
+INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
+# INPUT_PATH_TRAIN = "datasets/MOT17/train"
 INPUT_PATH_TEST = "datasets/2DMOT2015/test"
 
 
@@ -90,6 +91,8 @@ class GymRltrackingEnv(gym.Env):
 
         self.extractor = None
         self.act_reward = 0
+        self.id = uuid.uuid4()
+        self.train_length = 4
 
     def inference(self):
         self.train_mode = False
@@ -129,12 +132,12 @@ class GymRltrackingEnv(gym.Env):
         if source == "Venice-1" or source == "Venice-2":
             self.img_w = 1920
             self.img_h = 1080
-
         seqfile = os.path.join(INPUT_PATH_TRAIN, source, 'seqinfo.ini')
-        config = configparser.ConfigParser()
-        config.read(seqfile)
-        self.img_w = int(config.get('Sequence', 'imWidth'))
-        self.img_h = int(config.get('Sequence', 'imHeight'))
+        if os.path.isfile(seqfile):
+            config = configparser.ConfigParser()
+            config.read(seqfile)
+            self.img_w = int(config.get('Sequence', 'imWidth'))
+            self.img_h = int(config.get('Sequence', 'imHeight'))
 
         if self.train_mode:
             self.det_result = load_detection_result()[self.source]
@@ -375,8 +378,10 @@ class GymRltrackingEnv(gym.Env):
         self.detection_memory = self.get_detection(self.frame)
         reward = self.reward()
 
-        if len(self.objects) <= 0:
+        if len(self.objects) <= 0 or self.step_count == self.train_length:
             end = True
+            os.remove('gym_rltracking/envs/rltrack/gt/'+str(self.id)+'.txt')
+            os.remove('gym_rltracking/envs/rltrack/'+str(self.id)+'.txt')
         else:
             obs = self.gen_obs()
 
@@ -401,11 +406,13 @@ class GymRltrackingEnv(gym.Env):
         return accs, names
 
     def calculate_mota(self):
-        gtfiles = glob.glob(os.path.join('gym_rltracking/envs/rltrack/gt', 'gt.txt'))
-        tsfiles = [f for f in glob.glob(os.path.join('gym_rltracking/envs/rltrack', '*.txt')) if
-                   not os.path.basename(f).startswith('eval')]
-        gt = OrderedDict([(Path(f).parts[-3], mm.io.loadtxt(f, fmt='mot15-2D', min_confidence=1)) for f in gtfiles])
-        ts = OrderedDict([(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, fmt='mot15-2D')) for f in tsfiles])
+        # gtfiles = glob.glob(os.path.join('gym_rltracking/envs/rltrack/gt', 'gt.txt'))
+        # tsfiles = [f for f in glob.glob(os.path.join('gym_rltracking/envs/rltrack', '*.txt')) if
+        #            not os.path.basename(f).startswith('eval')]
+        gtfile = 'gym_rltracking/envs/rltrack/gt/'+str(self.id)+'.txt'
+        tsfile = 'gym_rltracking/envs/rltrack/'+str(self.id)+'.txt'
+        gt = OrderedDict([(str(self.id), mm.io.loadtxt(gtfile, fmt='mot15-2D', min_confidence=1))])
+        ts = OrderedDict([(str(self.id), mm.io.loadtxt(tsfile, fmt='mot15-2D'))])
 
         mh = mm.metrics.create()
         accs, names = self.compare_dataframes(gt, ts)
@@ -453,13 +460,13 @@ class GymRltrackingEnv(gym.Env):
         self.write_to_file(result)
 
     def write_gt_to_file(self, res):
-        with open('gym_rltracking/envs/rltrack/gt/gt.txt', 'w') as f:
+        with open('gym_rltracking/envs/rltrack/gt/'+str(self.id)+'.txt', 'w') as f:
             for item in res:
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
 
     def write_to_file(self, res):
-        with open('gym_rltracking/envs/rltrack/rltrack.txt', 'w') as f:
+        with open('gym_rltracking/envs/rltrack/'+str(self.id)+'.txt', 'w') as f:
             for item in res:
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
