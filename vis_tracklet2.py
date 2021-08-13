@@ -18,15 +18,16 @@ class MainWindow():
     def __init__(self, main):
 
         # canvas for image
-        self.canvas = Canvas(main, width=1600, height=900)
+        self.canvas = Canvas(main, width=1200, height=700)
         self.canvas.grid(row=0, column=0)
 
         # images
         self.my_images = []
-        imgs = "datasets/MOT17/train/MOT17-04-FRCNN/img1"
+        # imgs = "datasets/MOT17/train/MOT17-04-FRCNN/img1"
+        imgs = "datasets/2DMOT2015/train/ADL-Rundle-6/img1"
         filenames = next(walk(imgs), (None, None, []))[2]
         self.pics = []
-        for filename in filenames[1:150]:
+        for filename in filenames:
             self.pics.append(filename)
             img = os.path.join(imgs, filename)
             img = ImageTk.PhotoImage(Image.open(img))
@@ -41,13 +42,14 @@ class MainWindow():
         self.button = Button(main, text="next", command=self.onButton)
         self.button.grid(row=1, column=0)
         self.color = []
-        for i in range(200):
+        for i in range(1000):
             self.color.append(self.random_color())
 
     def getRects(self, frame):
         frame = int(frame[:6])
         results = []
-        track_result = "gym_rltracking/envs/rltrack/rltrack.txt"
+        track_result = "gym_rltracking/envs/rltrack/ad5614ef-ffd0-4e65-844a-58739e856d64.txt"
+        # track_result = "datasets/2DMOT2015/train/PETS09-S2L1/det/det.txt"
         with open(track_result) as f:
             content = f.readlines()
         content = [x.strip() for x in content]
@@ -55,8 +57,8 @@ class MainWindow():
         output = []
         for result in results[0]:
             result = result.split(',')
-            if int(result[0]) == frame:
-                output.append([int(result[1]), int(float(result[2])), int(float(result[3])), int(float(result[2])) + int(float(result[4])),
+            if int(float(result[0])) == frame:
+                output.append([int(float(result[1])), int(float(result[2])), int(float(result[3])), int(float(result[2])) + int(float(result[4])),
                                 int(float(result[3])) + int(float(result[5]))])
         return output
 
@@ -79,7 +81,8 @@ class MainWindow():
 
         for r in rect:
             clr = color[r[0]-2001]
-            self.canvas.create_rectangle([r[1], r[2], r[3], r[4]], fill=clr)
+            # clr = 'black'
+            self.canvas.create_rectangle([r[1], r[2], r[3], r[4]], outline=clr)
 
 #----------------------------------------------------------------------
 

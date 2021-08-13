@@ -9,24 +9,25 @@ from .layers import StableTransformerXL, PositionalEmbedding
 
 torch.set_grad_enabled(True)
 
-
 """
     RLTracker, output four actions : update, add, remove, block; representing action to input queries
 """
+
+
 class RLTracker(nn.Module):
-    def __init__(self, hidden_dim=1024, n_heads=4, n_layers=6,
+    def __init__(self, hidden_dim=256, n_heads=4, n_layers=6,
                  d_head_inner=64, d_ff_inner=128, action_space=3):
         super().__init__()
         # self.position_embedding = PositionalEncoding()
         self.memory = None
-        self.pos_embed = nn.Embedding(1200, 128)
-        # self.reduce_dim = self.mlp([512, 256, 128])
+        self.pos_embed = nn.Embedding(1200, 32)
+        self.reduce_dim = self.mlp([512, 256, 128])
 
-        self.transformer = StableTransformerXL(d_input=hidden_dim, n_layers=n_layers,
-            n_heads=n_heads, d_head_inner=d_head_inner, d_ff_inner=d_ff_inner)
+        #         self.transformer = StableTransformerXL(d_input=hidden_dim, n_layers=n_layers,
+        #                                                n_heads=n_heads, d_head_inner=d_head_inner, d_ff_inner=d_ff_inner)
 
         # self.linear_action = nn.Linear(hidden_dim, 3)
-
+        self.memory_rnn = nn.LSTMCell(hidden_dim, hidden_dim)
         # Define actor's model
         self.actor = nn.Sequential(
             nn.Linear(hidden_dim, 64),
@@ -56,31 +57,37 @@ class RLTracker(nn.Module):
             layers += [nn.Linear(sizes[j], sizes[j + 1]), act()]
         return nn.Sequential(*layers)
 
-    def forward(self, obs, action=None):
+    def forward(self, obs, hidden_state=None, action=None):
         det = obs['det']
         det_feat = obs['det_feat']
 
         det = self.pos_embed(det.long()).flatten(1)
-        # det_feat = self.reduce_dim(det_feat)
-        input = torch.cat((det, det_feat), dim=1).unsqueeze(0).permute(1, 0, 2)
-        # input = det.unsqueeze(0).permute(1, 0, 2)
-        # encoder_pos = self.position_embedding(input).permute(1, 0, 2)
 
-        # obj = self.pos_embed(obj.long()).flatten(1)
-        # obj_feat = self.reduce_dim(obj_feat)
-        # input = torch.cat((obj, obj_feat), dim=1).unsqueeze(0)
-        # input = torch.cat((input, self.empty_template), dim=1)
-        # decoder_pos = self.position_embedding(input).permute(1, 0, 2)
-        # self.memory = None
-        trans_state = self.transformer(input, self.memory)
-        trans_state, self.memory = trans_state['logits'], trans_state['memory']
-        policy = self._distribution(trans_state)
+        det_feat = self.reduce_dim(det_feat)
+        tr_input = torch.cat((det, det_feat), dim=1)
+
+        if hidden_state is None:
+            hidden = self.memory_rnn(tr_input)
+            tr_input = hidden[0]
+        else:
+            hidden = (hidden_state[:, :256], hidden_state[:, 256:])
+            hidden = self.memory_rnn(tr_input, hidden)
+            tr_input = hidden[0]
+        hidden_state = torch.cat(hidden, dim=1)
+        # # tr_input = torch.stack([tr_input]).permute(1, 0, 2)
+        tr_input = tr_input.unsqueeze(0).permute(1, 0, 2)
+
+        #         trans_state = self.transformer(tr_input, self.memory)
+        #         trans_state, self.memory = trans_state['logits'], trans_state['memory']
+
+        policy = self._distribution(tr_input)
         logp_a = None
         if action is not None:
             logp_a = self._log_prob_from_distribution(policy, action)
         action = policy.sample()
 
-        return action, logp_a
+        return action, logp_a, hidden_state
+
 
 # class PositionalEncoding(nn.Module):
 #
@@ -105,3 +112,4 @@ def build_agent(args):
     extractor = build_extractor()
     model = RLTracker()
     return extractor.cuda(), model.cuda()
+

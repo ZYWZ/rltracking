@@ -112,7 +112,10 @@ def get_args_parser():
 
 def test():
     env = gym.make('gym_rltracking:rltracking-v1')
-    env.init_source("MOT17-04-FRCNN")
+    flag = True
+    env.inference()
+    flag = False
+    env.init_source("MOT17-02-FRCNN", "train")
 
     # assert isinstance(env.action_space, Tuple), \
     #     "This example only works for envs with Tuple action spaces."
@@ -122,17 +125,22 @@ def test():
     extractor, agent = build_agent(args)
     extractor.eval()
     env.set_extractor(extractor)
+
     agent.eval()
     agent.load_state_dict(torch.load(MODEL_PATH))
     obs = env.initiate_env(1)
-    for i in range(100):
-        action, logp_a = agent(obs)
+    memory = None
+    for i in range(600):
+        action, logp_a, memory = agent(obs, memory)
         print(action)
         obs, reward, end, _ = env.step(action)
-        if end is True:
-            break
-        # env.render(mode='printTrack')
-    print(env.reward())
+        # if end is True:
+        #     break
+        env.render(mode='printTrack')
+    if not flag:
+        env.output_result()
+        env.output_gt()
+    # print(env.reward())
 
 
 if __name__ == "__main__":

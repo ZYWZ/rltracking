@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from models.rltracker import build_agent
 import gym
 import torchvision.transforms as T
-
+import os
 from utils.vpg import VpgAlgo
 from torch.distributions.categorical import Categorical
 
@@ -126,6 +126,19 @@ def write_to_log(log):
             f.write(','.join(map(repr, item)))
             f.write('\n')
 
+
+def plot_validate_reward(rewards):
+    epochs = range(0, int(len(rewards)))
+
+    plt.plot(epochs, rewards, '#FFA500', label='Validate reward')
+    plt.title('Validate reward of rltracker')
+    plt.xlabel('Steps')
+    plt.ylabel('Reward')
+    plt.legend()
+    plt.show()
+    plt.savefig('rewards_validate.png')
+
+
 def plot_reward(rewards, lr):
     epochs = range(0, int(len(rewards)))
 
@@ -137,79 +150,128 @@ def plot_reward(rewards, lr):
     plt.show()
     plt.savefig('rewards.png')
 
+def calculate_discount_reward(index, reward_list):
+    discount = 0.9
+    reward = 0
+    for i in range(len(reward_list[index:])):
+        factor = pow(discount, i)
+        reward += factor * reward_list[i]
+    return reward
+
 
 def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
+    # torch.autograd.set_detect_anomaly(True)
     obs = env.initiate_env(start_frame)
     ep_obs = []
     ep_actions = []
     ep_rewards = []
     ep_logp = []
-    for i in range(train_length):
-        ep_obs.append(obs)
-        action, logp_a = agent(obs)
-        ep_logp.append(logp_a)
-        # action = torch.Tensor([[0, 0, 0]])
-        ep_actions.append(action)
-        obs, reward, end, _ = env.step(action)
-        ep_rewards.append(reward)
-        if end is True:
-            break
-
+    memory = None
+    ep_memory = [memory]
+    with torch.no_grad():
+        for i in range(train_length):
+            ep_obs.append(obs)
+            action, logp_a, memory = agent(obs, memory)
+            ep_memory.append(memory)
+            ep_logp.append(logp_a)
+            # action = torch.Tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
+            ep_actions.append(action)
+            obs, reward, end, _ = env.step(action)
+            ep_rewards.append(reward * (i+1))
+            if end is True:
+                env.reset()
+                break
+    final_rewards = []
     for i in range(len(ep_obs)):
-
         optimizer.zero_grad()
-        _, logp_a = agent(ep_obs[i], ep_actions[i])
-        weight = torch.as_tensor(ep_rewards[i], dtype=torch.float32)
+        _, logp_a, memory = agent(ep_obs[i], ep_memory[i], ep_actions[i])
+        weight = calculate_discount_reward(i, ep_rewards)
+        final_rewards.append(weight)
+        weight = torch.as_tensor(weight, dtype=torch.float32)
         loss = -(logp_a * weight).sum()
 
-        loss.backward()
+        loss.backward(retain_graph=True)
         optimizer.step()
 
     print(ep_actions)
-    print("reward: ", ep_rewards)
-    return ep_rewards
+    print("discouted reward: ", np.mean(final_rewards))
+    return np.mean(ep_rewards)
+
+
+def validate_model(env, agent, start_frame, train_length):
+    obs = env.initiate_env(start_frame)
+    ep_rewards = []
+    memory = None
+    with torch.no_grad():
+        for i in range(train_length):
+            action, logp_a, memory = agent(obs, memory)
+            obs, reward, end, _ = env.step(action)
+            ep_rewards.append(reward)
+            if end is True:
+                env.reset()
+                break
+    return np.mean(ep_rewards)
 
 
 def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
           epochs=1, batch_size=10, render=False, total_frames=500):
     # make environment, check spaces, get obs / act dims
-    source = 'PETS09-S2L1'
+    # source = 'ADL-Rundle-6'
+    source = 'MOT17-02-FRCNN'
+    source_validate = 'MOT17-04-FRCNN'
     env = gym.make(env_name)
+    env_validate = gym.make(env_name)
     # env.init_source("PETS09-S2L1")
-    env.init_source(source)
+    env.init_source(source, "train")
+    env_validate.init_source(source_validate, "train")
 
     # assert isinstance(env.action_space, Tuple), \
     #     "This example only works for envs with Tuple action spaces."
     # assert isinstance(env.observation_space, Dict), \
     #     "This example only works for envs with Dict state spaces."
-    lr = 0.00002
+    lr = 0.0001
     extractor, agent = build_agent(args)
     agent.load_state_dict(torch.load(MODEL_PATH))
     extractor.eval()
     agent.train()
     optimizer = Adam(agent.parameters(), lr=lr)
     env.set_extractor(extractor)
+    env_validate.set_extractor(extractor)
     logs = []
     rewards = []
-    for i in range(2000):
+    rewards_validate = []
+    last_reward_validate = 0
+
+    mota_log_file = 'motaLog.txt'
+    if os.path.isfile(mota_log_file):
+        os.remove(mota_log_file)
+
+    for i in range(100):
         # check for stop criterion
-        average_latest_reward = -99
-        if i > 100:
-            average_latest_reward = np.mean(rewards[-100:])
-        if average_latest_reward > 1:
-            break
+        # average_latest_reward = -99
+        # if i > 100:
+        #     average_latest_reward = np.mean(rewards[-100:])
+        # if average_latest_reward > 1.3:
+        #     break
         print("ep ", i)
         # start_frame = random.randint(1, 740)
         start_frame = 1
-        train_length = 4
+        train_length = 100
         reward = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
-        logs.append(reward)
+        if i % 100 == 0:
+            reward_validate = validate_model(env_validate, agent, start_frame, train_length)
+            rewards_validate.append(reward_validate)
+            last_reward_validate = reward_validate
+        # logs.append(reward)
         rewards.append(np.mean(reward))
+        rewards_validate.append(last_reward_validate)
 
-    write_to_log(logs)
+
+    # write_to_log(logs)
     print("Saving model...")
     torch.save(agent.state_dict(), MODEL_PATH)
     plot_reward(rewards, lr)
+    plot_validate_reward(rewards_validate)
 
 
 if __name__ == "__main__":

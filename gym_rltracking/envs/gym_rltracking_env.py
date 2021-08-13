@@ -14,9 +14,12 @@ import glob
 from collections import OrderedDict
 from pathlib import Path
 import uuid
+import numpy as np
+import pandas as pd
+from pandas.core.frame import DataFrame
 
-INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
-# INPUT_PATH_TRAIN = "datasets/MOT17/train"
+# INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
+INPUT_PATH_TRAIN = "datasets/MOT17/train"
 INPUT_PATH_TEST = "datasets/2DMOT2015/test"
 
 
@@ -38,36 +41,6 @@ def _matcher(src_boxes, tgt_boxes):
     return row_ind, col_ind
 
 
-def load_detection_result():
-    _, directories, _ = next(walk(INPUT_PATH_TRAIN))
-    results = []
-    for directory in directories:
-        file = os.path.join(INPUT_PATH_TRAIN, directory, "det", "det.txt")
-        with open(file) as f:
-            content = f.readlines()
-        content = [x.strip() for x in content]
-        results.append(content)
-
-    output = dict(zip(directories, results))
-
-    return output
-
-
-def load_gt_result():
-    _, directories, _ = next(walk(INPUT_PATH_TRAIN))
-    results = []
-    for directory in directories:
-        file = os.path.join(INPUT_PATH_TRAIN, directory, "gt", "gt.txt")
-        with open(file) as f:
-            content = f.readlines()
-        content = [x.strip() for x in content]
-        results.append(content)
-
-    output = dict(zip(directories, results))
-
-    return output
-
-
 class GymRltrackingEnv(gym.Env):
     def __init__(self):
         self.source = None
@@ -79,6 +52,7 @@ class GymRltrackingEnv(gym.Env):
         self.img_w = -1
         self.img_h = -1
         action_list = []
+        self.input_path = ""
 
         for i in range(self.obj_count):
             action = Discrete(4)
@@ -91,8 +65,46 @@ class GymRltrackingEnv(gym.Env):
 
         self.extractor = None
         self.act_reward = 0
+        self.max_track_number = 50
         self.id = uuid.uuid4()
-        self.train_length = 4
+        self.train_length = 500
+
+        self.mota = []
+        self.idf1 = []
+
+        self.log = []
+        self.gt_for_reward = []
+        self.track_for_reward = []
+
+    def load_detection_result(self):
+        _, directories, _ = next(walk(self.input_path))
+        PATH = self.input_path
+
+        results = []
+        for directory in directories:
+            file = os.path.join(PATH, directory, "det", "det.txt")
+            with open(file) as f:
+                content = f.readlines()
+            content = [x.strip() for x in content]
+            results.append(content)
+
+        output = dict(zip(directories, results))
+
+        return output
+
+    def load_gt_result(self):
+        _, directories, _ = next(walk(self.input_path))
+        results = []
+        for directory in directories:
+            file = os.path.join(self.input_path, directory, "gt", "gt.txt")
+            with open(file) as f:
+                content = f.readlines()
+            content = [x.strip() for x in content]
+            results.append(content)
+
+        output = dict(zip(directories, results))
+
+        return output
 
     def inference(self):
         self.train_mode = False
@@ -100,7 +112,11 @@ class GymRltrackingEnv(gym.Env):
     def set_extractor(self, extractor):
         self.extractor = extractor
 
-    def init_source(self, source):
+    def init_source(self, source, train_or_test):
+        if train_or_test == "train":
+            self.input_path = INPUT_PATH_TRAIN
+        else:
+            self.input_path = INPUT_PATH_TEST
         self.source = source
         if source == "ADL-Rundle-1" or source == "ADL-Rundle-3" or source == "ADL-Rundle-6" or source == "ADL-Rundle-8":
             self.img_w = 1920
@@ -132,7 +148,7 @@ class GymRltrackingEnv(gym.Env):
         if source == "Venice-1" or source == "Venice-2":
             self.img_w = 1920
             self.img_h = 1080
-        seqfile = os.path.join(INPUT_PATH_TRAIN, source, 'seqinfo.ini')
+        seqfile = os.path.join(self.input_path, source, 'seqinfo.ini')
         if os.path.isfile(seqfile):
             config = configparser.ConfigParser()
             config.read(seqfile)
@@ -140,11 +156,12 @@ class GymRltrackingEnv(gym.Env):
             self.img_h = int(config.get('Sequence', 'imHeight'))
 
         if self.train_mode:
-            self.det_result = load_detection_result()[self.source]
-            self.gt_result = load_gt_result()[self.source]
+            self.det_result = self.load_detection_result()[self.source]
+            self.gt_result = self.load_gt_result()[self.source]
         else:
-            print("Not implemented inference mode for env.init")
-            raise
+            self.det_result = self.load_detection_result()[self.source]
+            # print("Not implemented inference mode for env.init")
+            # raise
 
     # initiate the objects in env, according to the first frame detection
     def initiate_env(self, start_frame):
@@ -186,6 +203,8 @@ class GymRltrackingEnv(gym.Env):
         action = action.detach().tolist()[0]
         boxes, feats = self.get_detection_memory()
 
+        action = action[:len(boxes)]
+
         assert len(action) == len(boxes), "action list length not equal to detection numbers!"
         assert len(action) == len(feats), "action list length not equal to detection feature numbers!"
 
@@ -224,69 +243,6 @@ class GymRltrackingEnv(gym.Env):
             new_obj.update(obj, feat, self.frame)
             self.objects.append(new_obj)
 
-    def update_objects(self, action, det_boxes, det_feat):
-        det_box_copy = det_boxes.copy()
-        det_feat_copy = det_feat.copy()
-        action = action.detach().tolist()[0]
-        assert len(action) >= len(self.objects), "action list is shorter than objects in the environment!"
-        update_list = []
-        update_list_object = []
-        add_list = []
-        remove_list = []
-        block_list = []
-        for i, obj in enumerate(det_boxes):
-            if action[i] == 0:
-                # update_list.append(obj.get_location())
-                # update_list_object.append(obj)
-                update_list.append(obj)
-            if action[i] == 1:
-                add_list.append(obj)
-            if action[i] == 2:
-                remove_list.append(obj)
-            if action[i] == 3:
-                block_list.append(obj)
-
-        # env_obj = []
-        # for obj in self.objects:
-        #     env_obj.append(obj.get_location())
-
-        # remove object
-        for obj in remove_list:
-            self.objects.remove(obj)
-
-        # update object
-        src = torch.Tensor(update_list).cuda()
-        tgt = torch.Tensor(det_boxes).cuda()
-        if src.shape[0] != 0 and tgt.shape[0] != 0:
-            ind_row, ind_col = _matcher(src, tgt)
-            for i, j in zip(ind_row, ind_col):
-                obj = self.objects[i]
-                obj.update(det_boxes[j], det_feat[j])
-                det_box_copy.remove(det_boxes[j])
-                det_feat_copy.remove(det_feat[j])
-
-        # add object, select from the rest of det_box_copy list
-        for i, act in enumerate(action[len(self.objects):]):
-            if act == 1 and len(det_box_copy) > 0:
-                new_obj = RLObject()
-                new_obj.update(det_box_copy[0], det_feat_copy[0])
-                self.objects.append(new_obj)
-                track = RLTrack()
-                track.init_track(self.frame, new_obj)
-                self.tracks.append(track)
-                det_box_copy.pop(0)
-                det_feat_copy.pop(0)
-
-        # modify tracklets
-        for track in self.tracks:
-            obj = track.get_object()
-            if obj in update_list_object:
-                track.update_track(self.frame)
-            if obj in block_list:
-                track.update_track(self.frame)
-            if obj in remove_list:
-                track.end_track(self.frame)
-
     def resize_roi(self, roi):
         w = self.img_w
         h = self.img_h
@@ -305,6 +261,7 @@ class GymRltrackingEnv(gym.Env):
 
         return normalized_roi, resize_roi
 
+
     def get_detection(self, frame):
         def get_index(frame):
             result = ""
@@ -318,23 +275,23 @@ class GymRltrackingEnv(gym.Env):
             return result
 
         boxes = []
-        if self.train_mode:
-            result = self.det_result
+        feat = []
+        result = self.det_result
 
-            for line in result:
-                line = line.split(',')
-                if int(line[0]) == frame:
-                    temp = []
-                    for i in line[2:6]:
-                        if float(i) < 0:
-                            i = 0
-                        temp.append(float(i))
-                    # transform detection from (x, y, w, h) to (x1, y1, x2, y2)
-                    temp = box_cxcywh_to_xyxy(temp)
-                    boxes.append(temp)
-
+        for line in result:
+            line = line.split(',')
+            if int(line[0]) == frame:
+                temp = []
+                for i in line[2:6]:
+                    if float(i) < 0:
+                        i = 0
+                    temp.append(float(i))
+                # transform detection from (x, y, w, h) to (x1, y1, x2, y2)
+                temp = box_cxcywh_to_xyxy(temp)
+                boxes.append(temp)
+        if len(boxes) > 0:
             img_index = get_index(frame)
-            img_path = os.path.join(INPUT_PATH_TRAIN, self.source, 'img1', img_index)
+            img_path = os.path.join(self.input_path, self.source, 'img1', img_index)
 
             img = Image.open(img_path)
             transform = T.Compose([
@@ -352,20 +309,31 @@ class GymRltrackingEnv(gym.Env):
             copy = feat.detach().cpu().numpy().tolist()
             del feat
             torch.cuda.empty_cache()
-
-
         else:
-            print("Not implemented inference mode for function env.get_next_detection()")
-            raise
+            copy = []
+            boxes.append(np.zeros(4))
+            copy.append(np.zeros(512))
 
         return boxes, copy
 
     def get_detection_memory(self):
         return self.detection_memory
 
+    def append_log(self, action):
+        self.log.append(str(action))
+        self.log.append(str(self.mota))
+        self.log.append(str(self.idf1))
+        self.log.append("-------------------------------------------")
+
+    def write_log(self):
+        mota_log_file = 'motaLog.txt'
+        with open(mota_log_file, 'a') as f:
+            for line in self.log:
+                f.write(line)
+                f.write('\n')
+
     # update objects in env, according to action
     def step(self, action):
-        end = False
         obs = {}
 
         self.act_reward = self.action_reward(action)
@@ -376,21 +344,50 @@ class GymRltrackingEnv(gym.Env):
         self.step_count += 1
         self.frame += 1
         self.detection_memory = self.get_detection(self.frame)
-        reward = self.reward()
+        reward = 0
+        end = False
+        if self.train_mode:
+            reward = self.reward()
 
-        if len(self.objects) <= 0 or self.step_count == self.train_length:
-            end = True
-            os.remove('gym_rltracking/envs/rltrack/gt/'+str(self.id)+'.txt')
-            os.remove('gym_rltracking/envs/rltrack/'+str(self.id)+'.txt')
+            end = bool(len(self.objects) <= 0
+                       or np.mean(self.mota) < 0.4
+                       or np.mean(self.idf1) < 0.5
+                       or self.step_count >= self.train_length)
+
+            if not end:
+                self.append_log(action)
+                obs = self.gen_obs()
+                reward = np.mean(self.mota) + np.mean(self.idf1)
+            elif self.step_count >= self.train_length:
+                self.write_log()
+                obs = self.gen_obs()
+                reward = np.mean(self.mota) + np.mean(self.idf1)
+            else:
+                self.write_log()
+                reward = 0
+                # os.remove('gym_rltracking/envs/rltrack/gt/' + str(self.id) + '.txt')
+                # os.remove('gym_rltracking/envs/rltrack/' + str(self.id) + '.txt')
         else:
             obs = self.gen_obs()
 
         return obs, reward, end, {}
 
+    def output_result(self):
+        self.generate_track_from_objects()
+        self.write_to_file(self.track_for_reward)
+
+    def output_gt(self):
+        self.gt_result = self.load_gt_result()[self.source]
+        gt = self.generate_gt_for_reward()
+        self.write_gt_to_file(gt)
+
     def reset(self):
         self.step_count = 0
         self.objects = []
         self.tracks = []
+        self.mota = []
+        self.idf1 = []
+        self.log = []
 
     def compare_dataframes(self, gts, ts):
         """Builds accumulator for each sequence."""
@@ -405,24 +402,81 @@ class GymRltrackingEnv(gym.Env):
 
         return accs, names
 
+    def construct_det_dataframe(self, list):
+        list = np.transpose(list)
+        index = list[:2]
+        index = pd.MultiIndex.from_arrays(index, names=('FrameId', 'Id'))
+        col_dict = {'FrameId': np.array(list[0]),
+                    'Id': np.array(list[1]),
+                    'X': np.array(list[2]),
+                    'Y': np.array(list[3]),
+                    'Width': np.array(list[4]),
+                    'Height': np.array(list[5]),
+                    'Confidence': np.array(list[6]),
+                    'ClassId': np.array(list[7]),
+                    'Visibility': np.array(list[8]),
+                    'unused': np.array(list[9])}
+
+        columns = ['X', 'Y', 'Width', 'Height', 'Confidence', 'ClassId', 'Visibility', 'unused']
+        df = DataFrame(col_dict, columns=columns, index=index)
+        # Account for matlab convention.
+        df[['X', 'Y']] -= (1, 1)
+        del df['unused']
+        min_confidence = 1
+        return df[df['Confidence'] >= min_confidence]
+
+    def construct_dataframe(self, list):
+        list = np.transpose(list)
+        index = list[:2]
+        index = pd.MultiIndex.from_arrays(index, names=('FrameId', 'Id'))
+        col_dict = {'FrameId': np.array(list[0]),
+                                'Id': np.array(list[1]),
+                                'X': np.array(list[2]),
+                                'Y': np.array(list[3]),
+                                'Width': np.array(list[4]),
+                                'Height': np.array(list[5]),
+                                'Confidence': np.array(list[6]),
+                                'ClassId': np.array(list[7]),
+                                'Visibility': np.array(list[8])}
+
+        columns = ['X', 'Y', 'Width', 'Height', 'Confidence', 'ClassId', 'Visibility']
+        df = DataFrame(col_dict, columns=columns, index=index)
+        # Account for matlab convention.
+        df[['X', 'Y']] -= (1, 1)
+
+        # Removed trailing column
+        # del df['unused']
+
+        # Remove all rows without sufficient confidence
+        min_confidence = 1
+        df = df[df['ClassId'] == 1]
+        df = df[df['Visibility'] >= 0.5]
+        return df[df['Confidence'] >= min_confidence]
+
     def calculate_mota(self):
         # gtfiles = glob.glob(os.path.join('gym_rltracking/envs/rltrack/gt', 'gt.txt'))
         # tsfiles = [f for f in glob.glob(os.path.join('gym_rltracking/envs/rltrack', '*.txt')) if
         #            not os.path.basename(f).startswith('eval')]
-        gtfile = 'gym_rltracking/envs/rltrack/gt/'+str(self.id)+'.txt'
-        tsfile = 'gym_rltracking/envs/rltrack/'+str(self.id)+'.txt'
-        gt = OrderedDict([(str(self.id), mm.io.loadtxt(gtfile, fmt='mot15-2D', min_confidence=1))])
-        ts = OrderedDict([(str(self.id), mm.io.loadtxt(tsfile, fmt='mot15-2D'))])
+        # gtfile = 'gym_rltracking/envs/rltrack/gt/' + str(self.id) + '.txt'
+        # tsfile = 'gym_rltracking/envs/rltrack/' + str(self.id) + '.txt'
+        # dataframe = mm.io.loadtxt(gtfile, fmt='mot15-2D', min_confidence=1)
+        if len(self.track_for_reward) > 0:
+            gt_df = self.construct_dataframe(self.gt_for_reward)
+            track_df = self.construct_det_dataframe(self.track_for_reward)
+            gt = OrderedDict([(str(self.id), gt_df)])
+            ts = OrderedDict([(str(self.id), track_df)])
 
-        mh = mm.metrics.create()
-        accs, names = self.compare_dataframes(gt, ts)
+            mh = mm.metrics.create()
+            accs, names = self.compare_dataframes(gt, ts)
 
-        metrics = list(mm.metrics.motchallenge_metrics)
-        summary = mh.compute_many(accs, names=names, metrics=metrics, generate_overall=True)
-        # print(mm.io.render_summary(summary, formatters=mh.formatters, namemap=mm.io.motchallenge_metric_names))
-        # print(summary.values[0][13])
+            metrics = list(mm.metrics.motchallenge_metrics)
+            summary = mh.compute_many(accs, names=names, metrics=metrics, generate_overall=True)
+            # print(mm.io.render_summary(summary, formatters=mh.formatters, namemap=mm.io.motchallenge_metric_names))
+            # print(summary.values[0][13])
+        else:
+            return None, False
 
-        return summary.values[0]
+        return summary.values[0], True
 
     def generate_gt_for_reward(self):
         result = []
@@ -434,20 +488,22 @@ class GymRltrackingEnv(gym.Env):
         for res in result:
             res = [float(x) for x in res]
             output.append(res)
-        self.write_gt_to_file(output)
+        self.gt_for_reward = output
+        return output
+        # self.write_gt_to_file(output)
 
-    def generate_track_result(self):
-        start_idx = 2001
-        result = []
-        for track in self.tracks:
-            start_frame = track.start_frame
-            for t in track.track:
-                line = [start_frame, start_idx, t[0], t[1], round(t[2] - t[0], 2), round(t[3] - t[1], 2), 1, -1, -1, -1]
-                result.append(line)
-                start_frame += 1
-
-            start_idx += 1
-        self.write_to_file(result)
+    # def generate_track_result(self):
+    #     start_idx = 2001
+    #     result = []
+    #     for track in self.tracks:
+    #         start_frame = track.start_frame
+    #         for t in track.track:
+    #             line = [start_frame, start_idx, t[0], t[1], round(t[2] - t[0], 2), round(t[3] - t[1], 2), 1, -1, -1, -1]
+    #             result.append(line)
+    #             start_frame += 1
+    #
+    #         start_idx += 1
+    #     self.write_to_file(result)
 
     def generate_track_from_objects(self):
         idx = 2001
@@ -457,16 +513,18 @@ class GymRltrackingEnv(gym.Env):
                 line = [frame, idx, loc[0], loc[1], round(loc[2] - loc[0], 2), round(loc[3] - loc[1], 2), 1, -1, -1, -1]
                 result.append(line)
             idx += 1
-        self.write_to_file(result)
+        self.track_for_reward = result
+        # self.write_to_file(result)
 
     def write_gt_to_file(self, res):
-        with open('gym_rltracking/envs/rltrack/gt/'+str(self.id)+'.txt', 'w') as f:
+        with open('gym_rltracking/envs/rltrack/gt/' + str(self.id) + '.txt', 'w') as f:
             for item in res:
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
 
     def write_to_file(self, res):
-        with open('gym_rltracking/envs/rltrack/'+str(self.id)+'.txt', 'w') as f:
+        print("Storing tracking result to file gym_rltracking/envs/rltrack/"+str(self.id)+".txt")
+        with open('gym_rltracking/envs/rltrack/' + str(self.id) + '.txt', 'w') as f:
             for item in res:
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
@@ -489,6 +547,8 @@ class GymRltrackingEnv(gym.Env):
 
     def action_reward(self, action):
         action = action.detach().tolist()[0]
+        boxes, _ = self.get_detection_memory()
+        action = action[:len(boxes)]
         block_act = 0
         reveal_act = 0
         for act in action:
@@ -507,37 +567,42 @@ class GymRltrackingEnv(gym.Env):
 
         return -(abs(reveal_act - reveal_obj) + abs(block_act - block_obj))
 
+
     def reward(self):
-        weight = [1, 1, 0, 0]
+        weight = [1, 1, 1, 1]
         # if self.step_count % 10 == 0:
         self.generate_gt_for_reward()
         self.generate_track_from_objects()
-        summary = self.calculate_mota()
-        idf1 = summary[0]
-        mota = summary[13]
-        motp = summary[14]
-
-        if mota >= 0.5:
-            reward_mota = 1
-        elif 0.3 < mota < 0.5:
-            reward_mota = 0
+        summary, flag = self.calculate_mota()
+        if flag:
+            self.idf1.append(summary[0])
+            self.mota.append(summary[13])
+            motp = summary[14]
         else:
-            reward_mota = -1
+            self.idf1.append(0)
+            self.mota.append(0)
 
-        if idf1 >= 0.5:
-            reward_idf1 = 1
-        elif 0.3 < idf1 < 0.5:
-            reward_idf1 = 0
-        else:
-            reward_idf1 = -1
+        # if self.mota >= 0.5:
+        #     reward_mota = 1
+        # elif 0.3 < self.mota < 0.5:
+        #     reward_mota = 0
+        # else:
+        #     reward_mota = -1
+        #
+        # if self.idf1 >= 0.5:
+        #     reward_idf1 = 1
+        # elif 0.3 < self.idf1 < 0.5:
+        #     reward_idf1 = 0
+        # else:
+        #     reward_idf1 = -1
 
-        boxes, _ = self.get_detection_memory()
-        gt_number = self.get_frame_gt(self.frame)
-        reward_obj_count = self.compare_objects(gt_number)
+        # boxes, _ = self.get_detection_memory()
+        # gt_number = self.get_frame_gt(self.frame)
+        # reward_obj_count = self.compare_objects(gt_number)
 
-        reward = weight[0] * mota + weight[1] * idf1 + weight[2] * reward_obj_count + weight[3] * self.act_reward
+        # reward = weight[0] * self.mota + weight[1] * self.idf1 + weight[2] * reward_obj_count + weight[3] * self.act_reward
 
-        return reward
+        return 0
 
     def gen_obs(self):
         locations = []
@@ -548,14 +613,19 @@ class GymRltrackingEnv(gym.Env):
         # locations = torch.Tensor(locations).cuda()
         # feats = torch.Tensor(feats).cuda()
 
-        frame = self.frame
+        # frame = self.frame
         det, det_feat = self.get_detection_memory()
         self.detection_memory = (det, det_feat)
 
-        det = torch.Tensor(det).cuda()
-        normed_det, det = self.resize_roi(det)
-        det_feat = torch.Tensor(det_feat).cuda()
         # locations = self.resize_roi(locations)
+        pad_number = self.max_track_number - len(det)
+        det = torch.Tensor(det)
+        normed_det, det = self.resize_roi(det)
+        det_feat = torch.Tensor(det_feat)
+        det_pad = torch.zeros(pad_number, 4)
+        feat_pad = torch.zeros(pad_number, 512)
+        det = torch.cat((det, det_pad), dim=0).cuda()
+        det_feat = torch.cat((det_feat, feat_pad), dim=0).cuda()
         obs = {
             'det': det,
             'det_feat': det_feat,
@@ -564,7 +634,7 @@ class GymRltrackingEnv(gym.Env):
 
     def render(self, mode='human'):
         print(self.frame)
-        if mode =='printTrack':
+        if mode == 'printTrack':
             for track in self.tracks:
                 print(track.track)
             print("-------------------")
@@ -577,7 +647,6 @@ class RLObject:
         self.block = False
         self.frames = []
         self.history = []
-
 
     def update(self, location, feature, frame):
         self.location = location
