@@ -29,12 +29,45 @@ def box_cxcywh_to_xyxy(x):
          (x_c + w), (y_c + h)]
     return b
 
+def _cosine_distance(a, b, data_is_normalized=False):
+    """Compute pair-wise cosine distance between points in `a` and `b`.
+    Parameters
+    ----------
+    a : array_like
+        An NxM matrix of N samples of dimensionality M.
+    b : array_like
+        An LxM matrix of L samples of dimensionality M.
+    data_is_normalized : Optional[bool]
+        If True, assumes rows in a and b are unit length vectors.
+        Otherwise, a and b are explicitly normalized to lenght 1.
+    Returns
+    -------
+    ndarray
+        Returns a matrix of size len(a), len(b) such that eleement (i, j)
+        contains the squared distance between `a[i]` and `b[j]`.
+    """
+    if not data_is_normalized:
+        a = np.asarray(a) / np.linalg.norm(a, axis=1, keepdims=True)
+        b = np.asarray(b) / np.linalg.norm(b, axis=1, keepdims=True)
+    return 1. - np.dot(a, b.T)
 
-def _matcher(src_boxes, tgt_boxes):
+
+def _matcher(src, tgt):
+    src_boxes = src['bbox']
+    tgt_boxes = tgt['bbox']
+
+    src_feat = src['feature']
+    tgt_feat = tgt['feature']
+
     cost_bbox = torch.cdist(src_boxes, tgt_boxes, p=1)
-    cost_giou = -generalized_box_iou(src_boxes, tgt_boxes)
+    # cost_giou = -generalized_box_iou(src_boxes, tgt_boxes)
+    cost_feat = _cosine_distance(src_feat, tgt_feat)
 
-    C = 2 * cost_bbox + 5 * cost_giou
+    cost_feat = torch.Tensor(cost_feat)
+
+    cost_bbox = F.normalize(cost_bbox)
+
+    C = cost_bbox + 6 * cost_feat
     C = C.cpu()
 
     row_ind, col_ind = linear_sum_assignment(C)
@@ -189,10 +222,22 @@ class GymRltrackingEnv(gym.Env):
             obj.set_block(True)
         update_list = [box[0] for box in src_list]
         obj_list = [obj.get_location() for obj in tgt_list]
-        src = torch.Tensor(update_list).cuda()
-        tgt = torch.Tensor(obj_list).cuda()
 
-        if src.shape[0] != 0 and tgt.shape[0] != 0:
+        src_feat = [box[1] for box in src_list]
+        tgt_feat = [obj.get_feature() for obj in tgt_list]
+
+        src = torch.Tensor(update_list)
+        tgt = torch.Tensor(obj_list)
+
+        # src_feat = torch.Tensor(update_list_feature)
+        # tgt_feat = torch.Tensor(obj_list_feature)
+
+        src = {'bbox': src,
+               'feature': src_feat}
+        tgt = {'bbox': tgt,
+               'feature': tgt_feat}
+
+        if src['bbox'].shape[0] != 0 and tgt['bbox'].shape[0] != 0:
             ind_row, ind_col = _matcher(tgt, src)
             for i, j in zip(ind_row, ind_col):
                 obj = tgt_list[i]
@@ -351,7 +396,7 @@ class GymRltrackingEnv(gym.Env):
 
             end = bool(len(self.objects) <= 0
                        or np.mean(self.mota) < 0.4
-                       or np.mean(self.idf1) < 0.5
+                       or np.mean(self.idf1) < 0.7
                        or self.step_count >= self.train_length)
 
             if not end:

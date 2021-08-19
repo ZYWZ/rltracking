@@ -23,8 +23,7 @@ class RLTracker(nn.Module):
         self.pos_embed = nn.Embedding(1200, 32)
         self.reduce_dim = self.mlp([512, 256, 128])
 
-        #         self.transformer = StableTransformerXL(d_input=hidden_dim, n_layers=n_layers,
-        #                                                n_heads=n_heads, d_head_inner=d_head_inner, d_ff_inner=d_ff_inner)
+        # self.transformer = StableTransformerXL(d_input=hidden_dim, n_layers=n_layers, n_heads=n_heads, d_head_inner=d_head_inner, d_ff_inner=d_ff_inner)
 
         # self.linear_action = nn.Linear(hidden_dim, 3)
         self.memory_rnn = nn.LSTMCell(hidden_dim, hidden_dim)
@@ -77,16 +76,18 @@ class RLTracker(nn.Module):
         # # tr_input = torch.stack([tr_input]).permute(1, 0, 2)
         tr_input = tr_input.unsqueeze(0).permute(1, 0, 2)
 
-        #         trans_state = self.transformer(tr_input, self.memory)
-        #         trans_state, self.memory = trans_state['logits'], trans_state['memory']
+        # trans_state = self.transformer(tr_input, self.memory)
+        # trans_state, self.memory = trans_state['logits'], trans_state['memory']
 
         policy = self._distribution(tr_input)
-        logp_a = None
+        act = policy.sample()
+
         if action is not None:
             logp_a = self._log_prob_from_distribution(policy, action)
-        action = policy.sample()
+        else:
+            logp_a = self._log_prob_from_distribution(policy, act)
 
-        return action, logp_a, hidden_state
+        return act, logp_a, hidden_state
 
 
 # class PositionalEncoding(nn.Module):

@@ -165,7 +165,7 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     ep_obs = []
     ep_actions = []
     ep_rewards = []
-    ep_logp = []
+    ep_logp_old = []
     memory = None
     ep_memory = [memory]
     with torch.no_grad():
@@ -173,7 +173,7 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
             ep_obs.append(obs)
             action, logp_a, memory = agent(obs, memory)
             ep_memory.append(memory)
-            ep_logp.append(logp_a)
+            ep_logp_old.append(logp_a)
             # action = torch.Tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
             ep_actions.append(action)
             obs, reward, end, _ = env.step(action)
@@ -187,9 +187,15 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
         _, logp_a, memory = agent(ep_obs[i], ep_memory[i], ep_actions[i])
         weight = calculate_discount_reward(i, ep_rewards)
         final_rewards.append(weight)
+        ratio = torch.exp(logp_a - ep_logp_old[i])
         weight = torch.as_tensor(weight, dtype=torch.float32)
-        loss = -(logp_a * weight).sum()
 
+        surr1 = ratio * weight
+        clip_param = 0.2
+        surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * weight
+
+        # loss = -(logp_a * weight).sum()
+        loss = -torch.min(surr1, surr2).sum()
         loss.backward(retain_graph=True)
         optimizer.step()
 
@@ -246,7 +252,7 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
     if os.path.isfile(mota_log_file):
         os.remove(mota_log_file)
 
-    for i in range(100):
+    for i in range(1000):
         # check for stop criterion
         # average_latest_reward = -99
         # if i > 100:
@@ -255,7 +261,7 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
         #     break
         print("ep ", i)
         # start_frame = random.randint(1, 740)
-        start_frame = 1
+        start_frame = 200
         train_length = 100
         reward = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
         if i % 100 == 0:

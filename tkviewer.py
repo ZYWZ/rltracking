@@ -2,16 +2,16 @@ import os
 import tkinter as tk
 from tkinter import Frame, Button
 from PIL import Image, ImageTk
-from PIL import ImageDraw
+from PIL import ImageDraw, ImageFont
 from random import *
 
 tk_root = tk.Tk()
 tk_root.title("Picture Viewer - Do I want to keep this picture?")
 file_count = 0
 basePath = "datasets/MOT17/train/MOT17-02-FRCNN"
-track_result = "gym_rltracking/envs/rltrack/286cff06-9e98-4092-9a49-cd6d326c3067.txt"
-# track_result = "datasets/MOT17/train/MOT17-02-FRCNN/det/det.txt"
-# track_result = "datasets/MOT17/train/MOT17-02-FRCNN/gt/gt.txt"
+track_result = "gym_rltracking/envs/rltrack/1-6.txt"
+# track_result = "datasets/MOT17/train/MOT17-04-FRCNN/det/det.txt"
+# track_result = "datasets/MOT17/train/MOT17-04-FRCNN/gt/gt.txt"
 
 def search(directory):
     global file_count
@@ -110,6 +110,9 @@ def draw_result():
             draw.rectangle(rect, outline=clr)
             draw.text(rect[0], str(line[0]))
 
+        font = ImageFont.truetype("arial.ttf", 50)
+        draw.text((1720, 20), filename[:6], font=font, fill=(255,255,0,255))
+
         savePath = os.path.join(basePath, "result")
         if not os.path.isdir(savePath):
             os.mkdir(savePath)
@@ -117,7 +120,7 @@ def draw_result():
 
     return 0
 
-draw_result()
+# draw_result()
 
 top_frame = Frame(tk_root)
 bottom_frame = Frame(tk_root)
