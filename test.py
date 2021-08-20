@@ -114,8 +114,8 @@ def test():
     env = gym.make('gym_rltracking:rltracking-v1')
     flag = True
     env.inference()
-    flag = False
-    env.init_source("MOT17-04-FRCNN", "train")
+    # flag = False
+    env.init_source("MOT17-01-FRCNN", "test")
 
     # assert isinstance(env.action_space, Tuple), \
     #     "This example only works for envs with Tuple action spaces."
@@ -130,7 +130,7 @@ def test():
     agent.load_state_dict(torch.load(MODEL_PATH))
     obs = env.initiate_env(1)
     memory = None
-    for i in range(1050):
+    for i in range(450):
         action, logp_a, memory = agent(obs, memory)
         print(action)
         obs, reward, end, _ = env.step(action)
@@ -140,6 +140,8 @@ def test():
     if not flag:
         env.output_result()
         env.output_gt()
+    else:
+        env.output_result()
     # print(env.reward())
 
 

@@ -4,6 +4,7 @@ import numpy as np
 import random
 from PIL import Image
 from torch.optim import Adam
+import torch.nn as nn
 import matplotlib.pyplot as plt
 from models.rltracker import build_agent
 import gym
@@ -168,10 +169,11 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     ep_logp_old = []
     memory = None
     ep_memory = [memory]
+    MseLoss = nn.MSELoss()
     with torch.no_grad():
         for i in range(train_length):
             ep_obs.append(obs)
-            action, logp_a, memory = agent(obs, memory)
+            action, _, logp_a, memory = agent(obs, memory)
             ep_memory.append(memory)
             ep_logp_old.append(logp_a)
             # action = torch.Tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
@@ -184,7 +186,7 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     final_rewards = []
     for i in range(len(ep_obs)):
         optimizer.zero_grad()
-        _, logp_a, memory = agent(ep_obs[i], ep_memory[i], ep_actions[i])
+        _, state_values, logp_a, memory = agent(ep_obs[i], ep_memory[i], ep_actions[i])
         weight = calculate_discount_reward(i, ep_rewards)
         final_rewards.append(weight)
         ratio = torch.exp(logp_a - ep_logp_old[i])
@@ -195,7 +197,7 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
         surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * weight
 
         # loss = -(logp_a * weight).sum()
-        loss = -torch.min(surr1, surr2).sum()
+        loss = -torch.min(surr1, surr2).sum() + 0.5 * MseLoss(state_values, weight)
         loss.backward(retain_graph=True)
         optimizer.step()
 

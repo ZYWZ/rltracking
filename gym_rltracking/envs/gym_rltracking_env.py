@@ -20,7 +20,7 @@ from pandas.core.frame import DataFrame
 
 # INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
 INPUT_PATH_TRAIN = "datasets/MOT17/train"
-INPUT_PATH_TEST = "datasets/2DMOT2015/test"
+INPUT_PATH_TEST = "datasets/MOT17/test"
 
 
 def box_cxcywh_to_xyxy(x):
@@ -65,9 +65,14 @@ def _matcher(src, tgt):
 
     cost_feat = torch.Tensor(cost_feat)
 
-    cost_bbox = F.normalize(cost_bbox)
+    if cost_bbox.shape[1] == 1:
+        cost_bbox = cost_bbox.permute(1, 0)
+        cost_bbox = F.normalize(cost_bbox)
+        cost_bbox = cost_bbox.permute(1, 0)
+    else:
+        cost_bbox = F.normalize(cost_bbox)
 
-    C = cost_bbox + 6 * cost_feat
+    C = cost_bbox + 0 * cost_feat
     C = C.cpu()
 
     row_ind, col_ind = linear_sum_assignment(C)

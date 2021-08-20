@@ -80,6 +80,7 @@ class RLTracker(nn.Module):
         # trans_state, self.memory = trans_state['logits'], trans_state['memory']
 
         policy = self._distribution(tr_input)
+        value = self.critic(tr_input)
         act = policy.sample()
 
         if action is not None:
@@ -87,7 +88,7 @@ class RLTracker(nn.Module):
         else:
             logp_a = self._log_prob_from_distribution(policy, act)
 
-        return act, logp_a, hidden_state
+        return act, value, logp_a, hidden_state
 
 
 # class PositionalEncoding(nn.Module):

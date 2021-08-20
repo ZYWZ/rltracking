@@ -8,25 +8,41 @@ from random import *
 tk_root = tk.Tk()
 tk_root.title("Picture Viewer - Do I want to keep this picture?")
 file_count = 0
-basePath = "datasets/MOT17/train/MOT17-02-FRCNN"
-track_result = "gym_rltracking/envs/rltrack/1-6.txt"
+basePath = "datasets/MOT17/train/MOT17-04-FRCNN"
+track_result = "gym_rltracking/envs/rltrack/3a16699f-3e5f-45f1-91fd-242d8c90aae1.txt"
 # track_result = "datasets/MOT17/train/MOT17-04-FRCNN/det/det.txt"
 # track_result = "datasets/MOT17/train/MOT17-04-FRCNN/gt/gt.txt"
 
 def search(directory):
     global file_count
+    imgs = []
     for root, subdirs, files in os.walk(directory):
         for file in files:
             if os.path.splitext(file)[1].lower() in ('.jpg', '.jpeg'):
                 img = os.path.join(root, file)
                 file_count += 1
-                yield img
+                imgs.append(img)
+    return imgs
 
+def last_image():
+    global photo_path
+    global last_photo_path
+    global index
+    index -= 1
+    photo_path = path_list[index]
+    photo = ImageTk.PhotoImage(Image.open(photo_path))
+    # picture.create_image(0, 0, image=photo)
+    picture.configure(image=photo)
+    picture.image = photo
 
 def next_image():
     try:
         global photo_path
-        photo_path = next(path_generator)
+        global last_photo_path
+        global index
+        index += 1
+        last_photo_path = photo_path
+        photo_path = path_list[index]
         photo = ImageTk.PhotoImage(Image.open(photo_path))
         # picture.create_image(0, 0, image=photo)
         picture.configure(image=photo)
@@ -56,6 +72,9 @@ def skip(args):
     # move_file(path + 'Skipped\\')
     next_image()
 
+def return_to_last(args):
+    last_image()
+
 
 def delete():
     # Code for deleting file here
@@ -84,7 +103,7 @@ def draw_result():
     for i in range(1000):
         color.append(random_color())
 
-    for filename in filenames:
+    for filename in filenames[:50]:
         print(filename)
         result = []
         full_result = []
@@ -100,7 +119,7 @@ def draw_result():
         img = Image.open(img)
         draw = ImageDraw.Draw(img)
         clr = "#FFFF00"
-        for line in result:
+        for index, line in enumerate(result):
             if line[0] > 2000:
                 clr = color[line[0]-2001]
             elif 0 < line[0] < 2000:
@@ -108,10 +127,13 @@ def draw_result():
 
             rect = [(line[1], line[2]), (line[3], line[4])]
             draw.rectangle(rect, outline=clr)
-            draw.text(rect[0], str(line[0]))
+            draw.text(rect[1], str(line[0]))
+            # font2 = ImageFont.truetype("arial.ttf", 10)
+            # draw.text((line[1], line[4]), str(index), font=font2)
 
         font = ImageFont.truetype("arial.ttf", 50)
         draw.text((1720, 20), filename[:6], font=font, fill=(255,255,0,255))
+        draw.text((20, 20), str(len(result)), font=font, fill=(255, 255, 0, 255))
 
         savePath = os.path.join(basePath, "result")
         if not os.path.isdir(savePath):
@@ -120,15 +142,18 @@ def draw_result():
 
     return 0
 
-# draw_result()
+draw_result()
 
 top_frame = Frame(tk_root)
 bottom_frame = Frame(tk_root)
 top_frame.pack(side='top')
 bottom_frame.pack(side='bottom')
 p = os.path.join(basePath, 'result')
-path_generator = search(p)
-photo_path = next(path_generator)
+path_list = search(p)
+# photo_path = next(path_generator)
+
+index = 0
+photo_path = path_list[index]
 
 photo = ImageTk.PhotoImage(Image.open(photo_path))
 # picture = tk.Canvas(tk_root)
@@ -146,6 +171,7 @@ picture.pack(side='top')
 # button_maybe.pack(side='left')
 # button_skip.pack(side='left')
 tk_root.bind('<space>', skip)
+tk_root.bind('<Return>', return_to_last)
 # button_delete.pack(side='bottom')
 
 tk_root.mainloop()
