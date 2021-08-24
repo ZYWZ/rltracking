@@ -8,9 +8,9 @@ from random import *
 tk_root = tk.Tk()
 tk_root.title("Picture Viewer - Do I want to keep this picture?")
 file_count = 0
-basePath = "datasets/MOT17/train/MOT17-04-FRCNN"
-track_result = "gym_rltracking/envs/rltrack/3a16699f-3e5f-45f1-91fd-242d8c90aae1.txt"
-# track_result = "datasets/MOT17/train/MOT17-04-FRCNN/det/det.txt"
+basePath = "datasets/MOT17/test/MOT17-08-FRCNN"
+track_result = "gym_rltracking/envs/rltrack/08-FRCNN.txt"
+# track_result = "datasets/MOT17/test/MOT17-12-FRCNN/det/det.txt"
 # track_result = "datasets/MOT17/train/MOT17-04-FRCNN/gt/gt.txt"
 
 def search(directory):
@@ -100,10 +100,10 @@ def draw_result():
     imgs = os.path.join(basePath, 'img1')
     filenames = next(os.walk(imgs), (None, None, []))[2]
     color = []
-    for i in range(1000):
+    for i in range(2000):
         color.append(random_color())
 
-    for filename in filenames[:50]:
+    for filename in filenames:
         print(filename)
         result = []
         full_result = []

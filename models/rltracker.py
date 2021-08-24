@@ -12,7 +12,19 @@ torch.set_grad_enabled(True)
 """
     RLTracker, output four actions : update, add, remove, block; representing action to input queries
 """
+class RLTracker_v2(nn.Module):
+    def __init__(self, hidden_dim=256, n_heads=4, n_layers=6,
+                 d_head_inner=64, d_ff_inner=128, action_space=3):
+        super().__init__()
+        self.pos_embed = nn.Embedding(1200, 32)
+        self.transformer = nn.Transformer(nhead=n_heads, num_encoder_layers=3, num_decoder_layers=3)
 
+    def forward(self, obs, hidden_state=None, action=None):
+        det = obs['det']
+        det_feat = obs['det_feat']
+        det_old = obs['det_old']
+        det_feat_old = obs['det_feat_old']
+        return 0
 
 class RLTracker(nn.Module):
     def __init__(self, hidden_dim=256, n_heads=4, n_layers=6,
@@ -79,8 +91,10 @@ class RLTracker(nn.Module):
         # trans_state = self.transformer(tr_input, self.memory)
         # trans_state, self.memory = trans_state['logits'], trans_state['memory']
 
+
         policy = self._distribution(tr_input)
-        value = self.critic(tr_input)
+        dist_entropy = policy.entropy()
+        value = self.critic(tr_input).permute(1,2,0)
         act = policy.sample()
 
         if action is not None:
@@ -88,7 +102,7 @@ class RLTracker(nn.Module):
         else:
             logp_a = self._log_prob_from_distribution(policy, act)
 
-        return act, value, logp_a, hidden_state
+        return act, value, dist_entropy, logp_a, hidden_state
 
 
 # class PositionalEncoding(nn.Module):

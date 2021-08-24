@@ -173,31 +173,35 @@ def train_one_epoch(env, agent, optimizer, source, start_frame, train_length):
     with torch.no_grad():
         for i in range(train_length):
             ep_obs.append(obs)
-            action, _, logp_a, memory = agent(obs, memory)
+            action, _, _, logp_a, memory = agent(obs, memory)
             ep_memory.append(memory)
             ep_logp_old.append(logp_a)
             # action = torch.Tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]])
             ep_actions.append(action)
             obs, reward, end, _ = env.step(action)
-            ep_rewards.append(reward * (i+1))
+            # ep_rewards.append(reward * (i+1))
+            ep_rewards.append(reward)
             if end is True:
                 env.reset()
                 break
     final_rewards = []
     for i in range(len(ep_obs)):
         optimizer.zero_grad()
-        _, state_values, logp_a, memory = agent(ep_obs[i], ep_memory[i], ep_actions[i])
+        _, value, dist_entropy, logp_a, memory = agent(ep_obs[i], ep_memory[i], ep_actions[i])
         weight = calculate_discount_reward(i, ep_rewards)
         final_rewards.append(weight)
         ratio = torch.exp(logp_a - ep_logp_old[i])
         weight = torch.as_tensor(weight, dtype=torch.float32)
+
+        value_weight = torch.ones(1, 60).cuda() * weight
+        value_loss = MseLoss(value[0], value_weight).sum()
 
         surr1 = ratio * weight
         clip_param = 0.2
         surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * weight
 
         # loss = -(logp_a * weight).sum()
-        loss = -torch.min(surr1, surr2).sum() + 0.5 * MseLoss(state_values, weight)
+        loss = -torch.min(surr1, surr2).sum() + 0.5 * value_loss - 0.01 * dist_entropy.sum()
         loss.backward(retain_graph=True)
         optimizer.step()
 
@@ -225,7 +229,7 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
           epochs=1, batch_size=10, render=False, total_frames=500):
     # make environment, check spaces, get obs / act dims
     # source = 'ADL-Rundle-6'
-    source = 'MOT17-02-FRCNN'
+    source = 'MOT17-04-SDP'
     source_validate = 'MOT17-04-FRCNN'
     env = gym.make(env_name)
     env_validate = gym.make(env_name)
@@ -263,16 +267,16 @@ def train(args, env_name='gym_rltracking:rltracking-v1', lr=1e-5,
         #     break
         print("ep ", i)
         # start_frame = random.randint(1, 740)
-        start_frame = 200
+        start_frame = 1
         train_length = 100
         reward = train_one_epoch(env, agent, optimizer, source, start_frame, train_length)
-        if i % 100 == 0:
-            reward_validate = validate_model(env_validate, agent, start_frame, train_length)
-            rewards_validate.append(reward_validate)
-            last_reward_validate = reward_validate
+        # if i % 100 == 0:
+        #     reward_validate = validate_model(env_validate, agent, start_frame, train_length)
+        #     rewards_validate.append(reward_validate)
+        #     last_reward_validate = reward_validate
         # logs.append(reward)
         rewards.append(np.mean(reward))
-        rewards_validate.append(last_reward_validate)
+        # rewards_validate.append(last_reward_validate)
 
 
     # write_to_log(logs)

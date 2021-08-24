@@ -42,3 +42,4 @@ for action in actions:
     rewards.append(reward)
 
 env.output_result()
+env.output_gt()

@@ -52,7 +52,7 @@ def _cosine_distance(a, b, data_is_normalized=False):
     return 1. - np.dot(a, b.T)
 
 
-def _matcher(src, tgt):
+def _matcher(src, tgt, type='block'):
     src_boxes = src['bbox']
     tgt_boxes = tgt['bbox']
 
@@ -72,7 +72,11 @@ def _matcher(src, tgt):
     else:
         cost_bbox = F.normalize(cost_bbox)
 
-    C = cost_bbox + 0 * cost_feat
+    if type == 'block':
+        C = 1 * cost_bbox + 0.5 * cost_feat
+    else:
+        C = 1 * cost_bbox + 0 * cost_feat
+
     C = C.cpu()
 
     row_ind, col_ind = linear_sum_assignment(C)
@@ -100,15 +104,17 @@ class GymRltrackingEnv(gym.Env):
         self.objects = []
         self.tracks = []
         self.detection_memory = None
+        self.detection_memory_old = None
 
         self.extractor = None
         self.act_reward = 0
-        self.max_track_number = 50
+        self.max_track_number = 60
         self.id = uuid.uuid4()
         self.train_length = 500
 
         self.mota = []
         self.idf1 = []
+        self.IDs = 0
 
         self.log = []
         self.gt_for_reward = []
@@ -222,7 +228,7 @@ class GymRltrackingEnv(gym.Env):
 
         return self.gen_obs()
 
-    def update_env_objects(self, src_list, tgt_list):
+    def update_env_objects(self, src_list, tgt_list, type='block'):
         for obj in tgt_list:
             obj.set_block(True)
         update_list = [box[0] for box in src_list]
@@ -243,7 +249,7 @@ class GymRltrackingEnv(gym.Env):
                'feature': tgt_feat}
 
         if src['bbox'].shape[0] != 0 and tgt['bbox'].shape[0] != 0:
-            ind_row, ind_col = _matcher(tgt, src)
+            ind_row, ind_col = _matcher(tgt, src, type)
             for i, j in zip(ind_row, ind_col):
                 obj = tgt_list[i]
                 obj.update(src_list[j][0], src_list[j][1], self.frame)
@@ -282,10 +288,10 @@ class GymRltrackingEnv(gym.Env):
                 reveal_objects.append(obj)
 
         # update current object
-        self.update_env_objects(update_current_list, reveal_objects)
+        self.update_env_objects(update_current_list, reveal_objects, type='reveal')
 
         # update old object, turn them into current object
-        self.update_env_objects(update_old_list, blocked_objects)
+        self.update_env_objects(update_old_list, blocked_objects, type='block')
 
         # add new object
         for obj, feat in add_list:
@@ -393,6 +399,8 @@ class GymRltrackingEnv(gym.Env):
         # reward = self.reward()
         self.step_count += 1
         self.frame += 1
+        self.detection_memory_old = self.detection_memory
+        self.detection_memory_old = self.detection_memory
         self.detection_memory = self.get_detection(self.frame)
         reward = 0
         end = False
@@ -400,18 +408,20 @@ class GymRltrackingEnv(gym.Env):
             reward = self.reward()
 
             end = bool(len(self.objects) <= 0
-                       or np.mean(self.mota) < 0.4
+                       # or np.mean(self.mota) < 0.4
                        or np.mean(self.idf1) < 0.7
                        or self.step_count >= self.train_length)
 
             if not end:
                 self.append_log(action)
                 obs = self.gen_obs()
-                reward = np.mean(self.mota) + np.mean(self.idf1)
+                # reward = np.mean(self.mota) + np.mean(self.idf1)
+                reward = 7 - self.IDs
             elif self.step_count >= self.train_length:
                 self.write_log()
                 obs = self.gen_obs()
-                reward = np.mean(self.mota) + np.mean(self.idf1)
+                # reward = np.mean(self.mota) + np.mean(self.idf1)
+                reward = 7 - self.IDs
             else:
                 self.write_log()
                 reward = 0
@@ -627,6 +637,7 @@ class GymRltrackingEnv(gym.Env):
         if flag:
             self.idf1.append(summary[0])
             self.mota.append(summary[13])
+            self.IDs = summary[11]
             motp = summary[14]
         else:
             self.idf1.append(0)
@@ -676,9 +687,26 @@ class GymRltrackingEnv(gym.Env):
         feat_pad = torch.zeros(pad_number, 512)
         det = torch.cat((det, det_pad), dim=0).cuda()
         det_feat = torch.cat((det_feat, feat_pad), dim=0).cuda()
+
+        if self.detection_memory_old is not None:
+            det_old, det_feat_old = self.detection_memory_old
+        else:
+            det_old = [np.zeros(4)]
+            det_feat_old = [np.zeros(512)]
+        pad_number_old = self.max_track_number - len(det_old)
+        det_old = torch.Tensor(det_old)
+        normed_det_old, det_old = self.resize_roi(det_old)
+        det_feat_old = torch.Tensor(det_feat_old)
+        det_pad_old = torch.zeros(pad_number_old, 4)
+        feat_pad_old = torch.zeros(pad_number_old, 512)
+        det_old = torch.cat((det_old, det_pad_old), dim=0).cuda()
+        det_feat_old = torch.cat((det_feat_old, feat_pad_old), dim=0).cuda()
+
         obs = {
             'det': det,
+            'det_old': det_old,
             'det_feat': det_feat,
+            'det_feat_old': det_feat_old
         }
         return obs
 
