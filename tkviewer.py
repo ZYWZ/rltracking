@@ -8,8 +8,13 @@ from random import *
 tk_root = tk.Tk()
 tk_root.title("Picture Viewer - Do I want to keep this picture?")
 file_count = 0
-basePath = "datasets/MOT17/test/MOT17-08-FRCNN"
-track_result = "gym_rltracking/envs/rltrack/08-FRCNN.txt"
+
+FLAG = True
+train_test = "train"
+sequence = "MOT17-04-FRCNN"
+
+basePath = "datasets/MOT17/"+train_test+"/" + sequence
+track_result = "gym_rltracking/envs/rltrack/seq_result/"+sequence+".txt"
 # track_result = "datasets/MOT17/test/MOT17-12-FRCNN/det/det.txt"
 # track_result = "datasets/MOT17/train/MOT17-04-FRCNN/gt/gt.txt"
 
@@ -40,7 +45,11 @@ def next_image():
         global photo_path
         global last_photo_path
         global index
+        global total_length
         index += 1
+        if index >= total_length:
+            index = 0
+
         last_photo_path = photo_path
         photo_path = path_list[index]
         photo = ImageTk.PhotoImage(Image.open(photo_path))
@@ -103,7 +112,7 @@ def draw_result():
     for i in range(2000):
         color.append(random_color())
 
-    for filename in filenames:
+    for filename in filenames[:]:
         print(filename)
         result = []
         full_result = []
@@ -142,7 +151,8 @@ def draw_result():
 
     return 0
 
-draw_result()
+if FLAG:
+    draw_result()
 
 top_frame = Frame(tk_root)
 bottom_frame = Frame(tk_root)
@@ -151,7 +161,7 @@ bottom_frame.pack(side='bottom')
 p = os.path.join(basePath, 'result')
 path_list = search(p)
 # photo_path = next(path_generator)
-
+total_length = len(path_list)
 index = 0
 photo_path = path_list[index]
 

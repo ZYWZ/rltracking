@@ -17,11 +17,38 @@ import uuid
 import numpy as np
 import pandas as pd
 from pandas.core.frame import DataFrame
+from filterpy.kalman import KalmanFilter
 
 # INPUT_PATH_TRAIN = "datasets/2DMOT2015/train"
 INPUT_PATH_TRAIN = "datasets/MOT17/train"
 INPUT_PATH_TEST = "datasets/MOT17/test"
 
+
+def convert_bbox_to_z(bbox):
+    """
+  Takes a bounding box in the form [x1,y1,x2,y2] and returns z in the form
+    [x,y,s,r] where x,y is the centre of the box and s is the scale/area and r is
+    the aspect ratio
+  """
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    x = bbox[0] + w / 2.
+    y = bbox[1] + h / 2.
+    s = w * h  # scale is just area
+    r = w / float(h)
+    return np.array([x, y, s, r]).reshape((4, 1))
+
+def convert_x_to_bbox(x, score=None):
+    """
+  Takes a bounding box in the centre form [x,y,s,r] and returns it in the form
+    [x1,y1,x2,y2] where x1,y1 is the top left and x2,y2 is the bottom right
+  """
+    w = np.sqrt(x[2] * x[3])
+    h = x[2] / w
+    if (score == None):
+        return np.array([x[0] - w / 2., x[1] - h / 2., x[0] + w / 2., x[1] + h / 2.]).reshape((1, 4))
+    else:
+        return np.array([x[0] - w / 2., x[1] - h / 2., x[0] + w / 2., x[1] + h / 2., score]).reshape((1, 5))
 
 def box_cxcywh_to_xyxy(x):
     x_c, y_c, w, h = x
@@ -108,7 +135,7 @@ class GymRltrackingEnv(gym.Env):
 
         self.extractor = None
         self.act_reward = 0
-        self.max_track_number = 60
+        self.max_track_number = 150
         self.id = uuid.uuid4()
         self.train_length = 500
 
@@ -119,6 +146,8 @@ class GymRltrackingEnv(gym.Env):
         self.log = []
         self.gt_for_reward = []
         self.track_for_reward = []
+        self.no_detection = False
+        self.seq_name = ""
 
     def load_detection_result(self):
         _, directories, _ = next(walk(self.input_path))
@@ -152,6 +181,8 @@ class GymRltrackingEnv(gym.Env):
 
     def inference(self):
         self.train_mode = False
+    def set_seq_name(self, name):
+        self.seq_name = name
 
     def set_extractor(self, extractor):
         self.extractor = extractor
@@ -198,6 +229,7 @@ class GymRltrackingEnv(gym.Env):
             config.read(seqfile)
             self.img_w = int(config.get('Sequence', 'imWidth'))
             self.img_h = int(config.get('Sequence', 'imHeight'))
+            self.seq_name = config.get('Sequence', 'name')
 
         if self.train_mode:
             self.det_result = self.load_detection_result()[self.source]
@@ -299,6 +331,78 @@ class GymRltrackingEnv(gym.Env):
             new_obj.update(obj, feat, self.frame)
             self.objects.append(new_obj)
 
+
+    def update_env_objects2(self, src_list, tgt_list, type='block'):
+        for obj in tgt_list:
+            obj.set_block(True)
+        update_list = [box[0] for box in src_list]
+        obj_list = [obj.get_location() for obj in tgt_list]
+
+        src_feat = [box[1] for box in src_list]
+        tgt_feat = [obj.get_feature() for obj in tgt_list]
+
+        src = torch.Tensor(update_list)
+        tgt = torch.Tensor(obj_list)
+
+        # src_feat = torch.Tensor(update_list_feature)
+        # tgt_feat = torch.Tensor(obj_list_feature)
+
+        src = {'bbox': src,
+               'feature': src_feat}
+        tgt = {'bbox': tgt,
+               'feature': tgt_feat}
+
+        # src is detection, tgt is env objects
+        if src['bbox'].shape[0] != 0 and tgt['bbox'].shape[0] != 0 and not self.no_detection:
+            ind_row, ind_col = _matcher(src, tgt, type)
+            for i, j in zip(ind_row, ind_col):
+                bbox = src_list[i][0]
+                feat = src_list[i][1]
+
+                env_bbox = tgt_list[j].get_location()
+                env_feat = tgt_list[j].get_feature()
+
+                src_box = torch.Tensor([bbox])
+                tgt_box = torch.Tensor([env_bbox])
+
+                bbox_dist = torch.cdist(src_box, tgt_box, p=1)
+                feat_dist = _cosine_distance([feat], [env_feat])
+
+                if bbox_dist < 300:
+                    obj = tgt_list[j]
+                    obj.update(src_list[i][0], src_list[i][1], self.frame)
+                    obj.set_block(False)
+                else:
+                    new_obj = RLObject(src_list[i][0])
+                    new_obj.update(src_list[i][0], src_list[i][1], self.frame)
+                    self.objects.append(new_obj)
+
+        for obj in tgt_list:
+            if obj.is_blocked():
+                if obj.get_time_since_update() <= 8:
+                    obj.kalman_predict(self.frame)
+
+
+    def update_no_action(self):
+        boxes, feats = self.get_detection_memory()
+        update_list = []
+        for box, feat in zip(boxes, feats):
+            update_list.append((box, feat))
+
+        env_objs = []
+        for obj in self.objects:
+            env_objs.append(obj)
+
+        if len(env_objs) == 0:
+            for obj, feat in update_list:
+                new_obj = RLObject(obj)
+                new_obj.update(obj, feat, self.frame)
+                self.objects.append(new_obj)
+
+        # update old object, turn them into current object
+        self.update_env_objects2(update_list, env_objs, type='reveal')
+
+
     def resize_roi(self, roi):
         w = self.img_w
         h = self.img_h
@@ -365,10 +469,12 @@ class GymRltrackingEnv(gym.Env):
             copy = feat.detach().cpu().numpy().tolist()
             del feat
             torch.cuda.empty_cache()
+            self.no_detection = False
         else:
             copy = []
             boxes.append(np.zeros(4))
             copy.append(np.zeros(512))
+            self.no_detection = True
 
         return boxes, copy
 
@@ -392,10 +498,11 @@ class GymRltrackingEnv(gym.Env):
     def step(self, action):
         obs = {}
 
-        self.act_reward = self.action_reward(action)
+        # self.act_reward = self.action_reward(action)
         # boxes, feat = self.get_detection_memory()
         # self.update_objects(action, boxes, feat)
-        self.update(action)
+        # self.update(action)
+        self.update_no_action()
         # reward = self.reward()
         self.step_count += 1
         self.frame += 1
@@ -442,7 +549,9 @@ class GymRltrackingEnv(gym.Env):
         self.write_gt_to_file(gt)
 
     def reset(self):
+        self.id = uuid.uuid4()
         self.step_count = 0
+        self.frame = 0
         self.objects = []
         self.tracks = []
         self.mota = []
@@ -577,14 +686,15 @@ class GymRltrackingEnv(gym.Env):
         # self.write_to_file(result)
 
     def write_gt_to_file(self, res):
-        with open('gym_rltracking/envs/rltrack/gt/' + str(self.id) + '.txt', 'w') as f:
+        print("Storing gt result to file gym_rltracking/envs/rltrack/gt/" + str(self.seq_name) + ".txt")
+        with open('gym_rltracking/envs/rltrack/gt/' + str(self.seq_name) + '.txt', 'w') as f:
             for item in res:
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
 
     def write_to_file(self, res):
-        print("Storing tracking result to file gym_rltracking/envs/rltrack/"+str(self.id)+".txt")
-        with open('gym_rltracking/envs/rltrack/' + str(self.id) + '.txt', 'w') as f:
+        print("Storing tracking result to file gym_rltracking/envs/rltrack/seq_result/"+str(self.seq_name)+".txt")
+        with open('gym_rltracking/envs/rltrack/seq_result/' + str(self.seq_name) + '.txt', 'w') as f:
             for item in res:
                 f.write(','.join(map(repr, item)))
                 f.write('\n')
@@ -719,12 +829,42 @@ class GymRltrackingEnv(gym.Env):
 
 
 class RLObject:
-    def __init__(self):
-        self.location = 0
+    def __init__(self, location):
+        self.location = location
         self.feature = None
         self.block = False
         self.frames = []
         self.history = []
+
+        self.kf = KalmanFilter(dim_x=7, dim_z=4)
+        self.kf.F = np.array(
+            [[1, 0, 0, 0, 1, 0, 0], [0, 1, 0, 0, 0, 1, 0], [0, 0, 1, 0, 0, 0, 1], [0, 0, 0, 1, 0, 0, 0],
+             [0, 0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 1]])
+        self.kf.H = np.array(
+            [[1, 0, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0, 0], [0, 0, 1, 0, 0, 0, 0], [0, 0, 0, 1, 0, 0, 0]])
+
+        self.kf.R[2:, 2:] *= 10.
+        self.kf.P[4:, 4:] *= 1000.  # give high uncertainty to the unobservable initial velocities
+        self.kf.P *= 10.
+        self.kf.Q[-1, -1] *= 0.01
+        self.kf.Q[4:, 4:] *= 0.01
+
+        self.kf.x[:4] = convert_bbox_to_z(np.array(self.location).reshape((4, 1)))
+        self.time_since_update = 0
+        self.kalman_history = []
+        self.hits = 0
+        self.hit_streak = 0
+        self.age = 0
+
+    # def kalman_update(self, bbox):
+    #     """
+    # Updates the state vector with observed bbox.
+    # """
+    #     self.time_since_update = 0
+    #     self.kalman_history = []
+    #     self.hits += 1
+    #     self.hit_streak += 1
+    #     self.kf.update(convert_bbox_to_z(bbox))
 
     def update(self, location, feature, frame):
         self.location = location
@@ -732,11 +872,37 @@ class RLObject:
         self.frames.append(frame)
         self.history.append(location)
 
+        self.kf.predict()
+        self.kalman_history = []
+        self.kf.update(convert_bbox_to_z(location))
+        self.time_since_update = 0
+
+    def kalman_predict(self, frame):
+        """
+        Advances the state vector and returns the predicted bounding box estimate.
+        :return:
+        """
+        if (self.kf.x[6] + self.kf.x[2]) <= 0:
+            self.kf.x[6] *= 0.0
+        self.kf.predict()
+        self.age += 1
+        if self.time_since_update > 0:
+            self.hit_streak = 0
+        self.time_since_update += 1
+        location = convert_x_to_bbox(self.kf.x)[0]
+        self.kalman_history.append(location)
+        self.frames.append(frame)
+        self.history.append(location)
+        return self.kalman_history[-1]
+
+    def get_time_since_update(self):
+        return self.time_since_update
+
     def get_state(self):
         return self.location, self.feature
 
     def get_location(self):
-        return self.location
+        return self.history[-1]
 
     def get_feature(self):
         return self.feature

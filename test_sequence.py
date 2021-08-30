@@ -5,12 +5,11 @@ import numpy as np
 from torch.distributions.categorical import Categorical
 import torch
 import os
+from os import walk
 import configparser
 
 MODEL_PATH = "models/state_dict_rltr_RL.pt"
 basePath ="datasets/MOT17/train"
-sequence = "MOT17-04-FRCNN"
-
 def get_args_parser():
     parser = argparse.ArgumentParser('RLTracker args', add_help=False)
     parser.add_argument('--lr', default=2e-4, type=float)
@@ -118,43 +117,27 @@ def test():
     env = gym.make('gym_rltracking:rltracking-v1')
     env.inference()
     flag = False
-    env.init_source(sequence, "train")
 
-    # assert isinstance(env.action_space, Tuple), \
-    #     "This example only works for envs with Tuple action spaces."
-    # assert isinstance(env.observation_space, Dict), \
-    #     "This example only works for envs with Dict state spaces."
+    _, directories, _ = next(walk(basePath))
+    for seq_name in directories:
+        seqfile = os.path.join(basePath, seq_name, 'seqinfo.ini')
+        config = configparser.ConfigParser()
+        config.read(seqfile)
+        seq_length = int(config.get('Sequence', 'seqLength'))
 
-    extractor, agent = build_agent(args)
-    extractor.eval()
-    env.set_extractor(extractor)
+        env.reset()
+        env.init_source(seq_name, "train")
+        extractor, agent = build_agent(args)
+        extractor.eval()
+        env.set_extractor(extractor)
 
-    agent.eval()
-    agent.load_state_dict(torch.load(MODEL_PATH))
-    obs = env.initiate_env(1)
-    memory = None
-
-    seqfile = os.path.join(basePath, sequence, 'seqinfo.ini')
-    config = configparser.ConfigParser()
-    config.read(seqfile)
-    seq_length = int(config.get('Sequence', 'seqLength'))
-
-    for i in range(seq_length):
-        # action, value, dist_entropy, logp_a, memory = agent(obs, memory)
-        action = [0]
-        print(action)
-        obs, reward, end, _ = env.step(action)
-        # print(reward)
-        # if end is True:
-        #     break
-        env.render(mode='printTrack')
-    if not flag:
+        obs = env.initiate_env(1)
+        for i in range(seq_length):
+            print(seq_name + " " + str(i) + "/" + str(seq_length))
+            action = [0]
+            obs, reward, end, _ = env.step(action)
         env.output_result()
-        env.output_gt()
-    else:
-        env.output_result()
-    # print(env.reward())
-
+        # env.output_gt()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('RLTracker args', parents=[get_args_parser()])
