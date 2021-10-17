@@ -8,6 +8,8 @@ import os
 from os import walk
 import configparser
 
+from proto import tracking_results_pb2
+
 train_test = "train"
 MODEL_PATH = "models/state_dict_rltr_RL.pt"
 basePath ="datasets/MOT17/"+train_test
@@ -116,7 +118,9 @@ def get_args_parser():
 
 def test():
     _, directories, _ = next(walk(basePath))
-    for seq_name in directories:
+
+    for seq_name in directories[8:9]:
+        output_file = os.path.join("saved_results", seq_name+".pb")
         env = gym.make('gym_rltracking:rltracking-v1')
         env.inference()
         flag = False
@@ -137,8 +141,37 @@ def test():
             print(seq_name + " " + str(i) + "/" + str(seq_length))
             action = [0]
             obs, reward, end, _ = env.step(action)
-        env.output_result()
-        # env.output_gt()
+        node_features, node_labels, node_topologies = env.output_result()
+        node_app_features, node_st_features = node_features
+        tracking_result_pb = tracking_results_pb2.Tracklets()
+
+        for app_features, st_features, labels, topologies in zip(node_app_features, node_st_features, node_labels, node_topologies):
+            _tracklet = tracking_result_pb.tracklet.add()
+            for d in app_features:
+                _af = _tracklet.ap_feature_list.features.add()
+                for k in d:
+                    _af.feats.append(k)
+
+            for d in st_features:
+                _sf = _tracklet.st_features.features.add()
+                _sf.x = d[0]
+                _sf.y = d[1]
+                _sf.w = d[2]
+                _sf.h = d[3]
+                _sf.frame = d[4]
+
+            for d in labels:
+                _lb = _tracklet.label_list.label.add()
+                _lb.label.append(0 if d else 1)
+
+            for s, t in zip(topologies[0], topologies[1]):
+                _tp = _tracklet.topology.edges.add()
+                _tp.source = s
+                _tp.target = t
+
+        with open(output_file, 'wb') as f:
+            f.write(tracking_result_pb.SerializeToString())
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser('RLTracker args', parents=[get_args_parser()])

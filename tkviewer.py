@@ -4,19 +4,51 @@ from tkinter import Frame, Button
 from PIL import Image, ImageTk
 from PIL import ImageDraw, ImageFont
 from random import *
+import glob
+import cv2
 
 tk_root = tk.Tk()
 tk_root.title("Picture Viewer - Do I want to keep this picture?")
 file_count = 0
 
 FLAG = True
-train_test = "train"
-sequence = "MOT17-04-FRCNN"
+MAKE_VIDEO = False
+dataset = "MOT17"
+# train_test = ""
+sequence = "MOT17-05-SDP"
 
-basePath = "datasets/MOT17/"+train_test+"/" + sequence
+
+TRAIN_SEQUENCE = ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']
+if sequence[:8] in TRAIN_SEQUENCE:
+    train_test = "train"
+else:
+    train_test = "test"
+basePath = "datasets/"+dataset+"/"+train_test+"/" + sequence
 track_result = "gym_rltracking/envs/rltrack/seq_result/"+sequence+".txt"
-# track_result = "datasets/MOT17/test/MOT17-12-FRCNN/det/det.txt"
-# track_result = "datasets/MOT17/train/MOT17-04-FRCNN/gt/gt.txt"
+# track_result = "datasets/"+dataset+"/"+train_test+"/"+sequence+"/det/det.txt"
+# track_result = "datasets/"+dataset+"/"+train_test+"/"+sequence+"/gt/gt.txt"
+
+def img_to_video(img_list):
+    print("Making video")
+    img_array = []
+    size = (1920, 1080)
+    count = 1
+    for filename in glob.glob(basePath+'/result/*.jpg'):
+
+        print("Processing frame " + str(count)+" / " + str(len(img_list)))
+        img = cv2.imread(filename)
+        height, width, layers = img.shape
+        size = (width, height)
+        img_array.append(img)
+        count += 1
+
+    out = cv2.VideoWriter('video/' + sequence + '.avi', cv2.VideoWriter_fourcc(*'DIVX'), 30, size)
+    for i in range(len(img_array)):
+        out.write(img_array[i])
+    out.release()
+    print("Finish!")
+
+
 
 def search(directory):
     global file_count
@@ -121,13 +153,20 @@ def draw_result():
                 # and int(line[7]) <= 2 and int(line[6]) == 1 and float(line[8]) > 0.3
                 result.append([int(float(line[1])), int(float(line[2])), int(float(line[3])),
                                int(float(line[2])) + int(float(line[4])),
-                               int(float(line[3])) + int(float(line[5]))])
+                               int(float(line[3])) + int(float(line[5])), int(line[-1]), str(line[-2])])
                 full_result.append(line)
         # print(full_result)
         img = os.path.join(imgs, filename)
         img = Image.open(img)
         draw = ImageDraw.Draw(img)
         clr = "#FFFF00"
+        # for index, line in enumerate(result):
+        #     if line[-2] == 0:
+        #         clr = 'blue'
+        #     elif line[-2] == 1:
+        #         clr = 'red'
+        #     else:
+        #         clr = 'black'
         for index, line in enumerate(result):
             if line[0] > 2000:
                 clr = color[line[0]-2001]
@@ -135,14 +174,24 @@ def draw_result():
                 clr = color[line[0]-1]
 
             rect = [(line[1], line[2]), (line[3], line[4])]
-            draw.rectangle(rect, outline=clr)
-            draw.text(rect[1], str(line[0]))
-            # font2 = ImageFont.truetype("arial.ttf", 10)
-            # draw.text((line[1], line[4]), str(index), font=font2)
+            draw.rectangle(rect, outline=clr, width=3)
+            font = ImageFont.truetype("arial.ttf", 25)
+            draw.text(rect[1], str(line[0]), font=font, fill=clr)
+            if len(str(line[5])) > 4:
+                feat_dist = str(line[5])[:4]
+            else:
+                feat_dist = str(line[5])
+            draw.text((line[3], line[2]), feat_dist, font=font, fill=clr)
+
+            draw.text((line[3], (line[2]+line[4])/2), str(line[6]), font=font, fill=clr)
+
+            draw.text(rect[0], str(line[1]))
+            font2 = ImageFont.truetype("arial.ttf", 10)
+            draw.text((line[1], line[4]), str(index), font=font2)
 
         font = ImageFont.truetype("arial.ttf", 50)
-        draw.text((1720, 20), filename[:6], font=font, fill=(255,255,0,255))
-        draw.text((20, 20), str(len(result)), font=font, fill=(255, 255, 0, 255))
+        # draw.text((1720, 20), filename[:6], font=font, fill=(255,255,0,255))
+        draw.text((20, 20), filename[2:6], font=font, fill=(255, 255, 0, 255))
 
         savePath = os.path.join(basePath, "result")
         if not os.path.isdir(savePath):
@@ -150,6 +199,7 @@ def draw_result():
         img.save(os.path.join(savePath, filename))
 
     return 0
+
 
 if FLAG:
     draw_result()
@@ -159,29 +209,33 @@ bottom_frame = Frame(tk_root)
 top_frame.pack(side='top')
 bottom_frame.pack(side='bottom')
 p = os.path.join(basePath, 'result')
+# p = os.path.join(basePath, 'result-ours')
 path_list = search(p)
-# photo_path = next(path_generator)
-total_length = len(path_list)
-index = 0
-photo_path = path_list[index]
+if MAKE_VIDEO:
+    img_to_video(path_list)
+else:
+    # photo_path = next(path_generator)
+    total_length = len(path_list)
+    index = 0
+    photo_path = path_list[index]
 
-photo = ImageTk.PhotoImage(Image.open(photo_path))
-# picture = tk.Canvas(tk_root)
-# picture.create_image(0,0, image=photo)
-picture = tk.Label(tk_root, image=photo)
-picture.image = photo
-picture.pack(side='top')
+    photo = ImageTk.PhotoImage(Image.open(photo_path))
+    # picture = tk.Canvas(tk_root)
+    # picture.create_image(0,0, image=photo)
+    picture = tk.Label(tk_root, image=photo)
+    picture.image = photo
+    picture.pack(side='top')
 
-# button_yes = Button(top_frame, text="Yes", command=yes)
-# button_maybe = Button(top_frame, text="Maybe", command=maybe)
-# button_skip = Button(top_frame, text="skip", command=skip)
-# button_delete = Button(bottom_frame, text="Delete", command=delete)
+    # button_yes = Button(top_frame, text="Yes", command=yes)
+    # button_maybe = Button(top_frame, text="Maybe", command=maybe)
+    # button_skip = Button(top_frame, text="skip", command=skip)
+    # button_delete = Button(bottom_frame, text="Delete", command=delete)
 
-# button_yes.pack(side='left')
-# button_maybe.pack(side='left')
-# button_skip.pack(side='left')
-tk_root.bind('<space>', skip)
-tk_root.bind('<Return>', return_to_last)
-# button_delete.pack(side='bottom')
+    # button_yes.pack(side='left')
+    # button_maybe.pack(side='left')
+    # button_skip.pack(side='left')
+    tk_root.bind('<space>', skip)
+    tk_root.bind('<Return>', return_to_last)
+    # button_delete.pack(side='bottom')
 
-tk_root.mainloop()
+    tk_root.mainloop()

@@ -8,8 +8,16 @@ import os
 import configparser
 
 MODEL_PATH = "models/state_dict_rltr_RL.pt"
-basePath ="datasets/MOT17/train"
-sequence = "MOT17-04-FRCNN"
+
+sequence = "MOT17-05-SDP"
+
+TRAIN_SEQUENCE = ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']
+if sequence[:8] in TRAIN_SEQUENCE:
+    train_test = "train"
+else:
+    train_test = "test"
+
+basePath ="datasets/MOT17/"+train_test
 
 def get_args_parser():
     parser = argparse.ArgumentParser('RLTracker args', add_help=False)
@@ -116,9 +124,9 @@ def get_args_parser():
 
 def test():
     env = gym.make('gym_rltracking:rltracking-v1')
-    env.inference()
+    # env.inference()
     flag = False
-    env.init_source(sequence, "train")
+    env.init_source(sequence, train_test)
 
     # assert isinstance(env.action_space, Tuple), \
     #     "This example only works for envs with Tuple action spaces."
@@ -131,24 +139,24 @@ def test():
 
     agent.eval()
     agent.load_state_dict(torch.load(MODEL_PATH))
-    obs = env.initiate_env(1)
+    env.initiate_env(1)
     memory = None
 
     seqfile = os.path.join(basePath, sequence, 'seqinfo.ini')
     config = configparser.ConfigParser()
     config.read(seqfile)
     seq_length = int(config.get('Sequence', 'seqLength'))
-
+    obs = {}
     for i in range(seq_length):
         # action, value, dist_entropy, logp_a, memory = agent(obs, memory)
         action = [0]
-        print(action)
+        # print(action)
         obs, reward, end, _ = env.step(action)
         # print(reward)
         # if end is True:
         #     break
         env.render(mode='printTrack')
-    if not flag:
+    if train_test == "train":
         env.output_result()
         env.output_gt()
     else:
