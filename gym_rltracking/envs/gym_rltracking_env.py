@@ -37,7 +37,9 @@ INPUT_PATH_TEST = "datasets/MOT17/test"
 # NO_INTERP = ['MOT17-13-DPM', 'MOT17-13-FRCNN', 'MOT17-13-SDP', 'MOT17-10-DPM', 'MOT17-10-FRCNN', 'MOT17-10-SDP']
 NO_INTERP = []
 
-MODEL_PATH = "models/checkpoints/gat_MOT17_ckpt_epoch_50.pth"
+MOVING_SEQUENCE = ['MOT17-05', 'MOT17-10', 'MOT17-11', 'MOT17-13', 'MOT17-06', 'MOT17-07', 'MOT17-12', 'MOT17-14']
+
+MODEL_PATH = "models/checkpoints/gat_MOT17_ckpt_epoch_100.pth"
 
 def name_to_layer_type(name):
     if name == LayerType.IMP1.name:
@@ -507,7 +509,7 @@ class GymRltrackingEnv(gym.Env):
                 # dist = self.calculate_dist(feat_dist, bbox_dist, time_dist)
                 dist = feat_dist
                 # if bbox_dist < 500 and feat_dist < 0.5:
-                if dist < 0.45:
+                if dist < 0.6:
                     obj = tgt_list[j]
                     obj.update(src_list[i][0], src_list[i][1], self.frame)
                     obj.add_feat_dist(feat_dist[0][0])
@@ -520,7 +522,10 @@ class GymRltrackingEnv(gym.Env):
         for obj in tgt_list:
             if obj.is_blocked():
                 obj.not_updated()
-                if obj.get_time_since_update() >= 100:
+                time_threshold = 200
+                if self.seq_name[:8] in MOVING_SEQUENCE:
+                    time_threshold = 100
+                if obj.get_time_since_update() >= time_threshold:
                     obj.deactivate()
                 # if obj.get_time_since_update() <= 8:
                 #     obj.kalman_predict(self.frame)
@@ -873,44 +878,44 @@ class GymRltrackingEnv(gym.Env):
 
         return obj
 
-    # def get_average_feat(self, obj_list):
-    #     feat_values = []
-    #     for obj in obj_list:
-    #         feat_values.append(obj.get_feature().tolist())
-    #
-    #     return feat_values
-    #
-    # def reconcat_object(self, obj1, obj2):
-    #     for frame, loc, feature in zip(obj2.get_frames(), obj2.get_history(), obj2.get_features()):
-    #         obj1.update(loc, feature, frame)
-    #     return obj1
-    #
-    # def reconcat_split_objects(self, objects):
-    #     if len(objects) < 3:
-    #         return objects
-    #
-    #     concated_index = []
-    #     for i, object in enumerate(objects):
-    #
-    #         if i == 0 or i == 1:
-    #             continue
-    #         source_obj = [object]
-    #         target_obj_list = objects[:i-1]
-    #
-    #         source_feat = self.get_average_feat(source_obj)
-    #         target_feats = self.get_average_feat(target_obj_list)
-    #
-    #         for j, target_feat in enumerate(target_feats):
-    #             feat_dist = _cosine_distance(source_feat, [target_feat])[0][0]
-    #             if feat_dist < 0.2:
-    #                 target_obj_list[j] = self.reconcat_object(target_obj_list[j], source_obj[0])
-    #                 concated_index.append(i)
-    #     processed = []
-    #     for i, obj in enumerate(objects):
-    #         if i not in concated_index:
-    #             processed.append(obj)
-    #
-    #     return processed
+    def get_average_feat(self, obj_list):
+        feat_values = []
+        for obj in obj_list:
+            feat_values.append(obj.get_feature().tolist())
+
+        return feat_values
+
+    def reconcat_object(self, obj1, obj2):
+        for frame, loc, feature in zip(obj2.get_frames(), obj2.get_history(), obj2.get_features()):
+            obj1.update(loc, feature, frame)
+        return obj1
+
+    def reconcat_split_objects(self, objects):
+        if len(objects) < 3:
+            return objects
+
+        concated_index = []
+        for i, object in enumerate(objects):
+
+            if i == 0 or i == 1:
+                continue
+            source_obj = [object]
+            target_obj_list = objects[:i-1]
+
+            source_feat = self.get_average_feat(source_obj)
+            target_feats = self.get_average_feat(target_obj_list)
+
+            for j, target_feat in enumerate(target_feats):
+                feat_dist = _cosine_distance(source_feat, [target_feat])[0][0]
+                if feat_dist < 0.3:
+                    target_obj_list[j] = self.reconcat_object(target_obj_list[j], source_obj[0])
+                    concated_index.append(i)
+        processed = []
+        for i, obj in enumerate(objects):
+            if i not in concated_index:
+                processed.append(obj)
+
+        return processed
 
     def split_object_2(self, obj, labels):
         if labels.count(1) == 0 or labels.count(0) == 0:
@@ -938,6 +943,9 @@ class GymRltrackingEnv(gym.Env):
                 objects.append(obj)
 
         # objects = self.reconcat_split_objects(objects)
+
+        for obj in objects[1:]:
+            obj.set_is_separated(True)
 
         return objects
 
@@ -1046,14 +1054,19 @@ class GymRltrackingEnv(gym.Env):
 
         self.separate_track(self.objects)
         # visualize_graph(node_features, node_labels, node_topologies)
+        print(len(self.objects))
         print(len(self.processed_objects))
         for obj in self.processed_objects:
             # print(obj.get_history())
             # print(obj.get_frames())
             obj = self.interpolate_track(obj)
             for frame, loc in zip(obj.get_frames(), obj.get_history()):
+                if obj.get_is_separated():
+                    flag = 1
+                else:
+                    flag = 0
                 # if is_detection:
-                line = [frame, idx, loc[0], loc[1], round(loc[2] - loc[0], 2), round(loc[3] - loc[1], 2), -1, -1, -1, -1]
+                line = [frame, idx, loc[0], loc[1], round(loc[2] - loc[0], 2), round(loc[3] - loc[1], 2), -1, -1, -1, flag]
                 # line = [frame, idx, loc[0], loc[1], loc[2], loc[3], 1, -1, -1, -1]
                 result.append(line)
             if len(obj.get_interps()[0]) != 0 and self.seq_name not in NO_INTERP:

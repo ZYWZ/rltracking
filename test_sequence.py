@@ -8,7 +8,7 @@ import os
 from os import walk
 import configparser
 
-train_test = "train"
+train_test = "test"
 MODEL_PATH = "models/state_dict_rltr_RL.pt"
 basePath ="datasets/MOT17/"+train_test
 def get_args_parser():

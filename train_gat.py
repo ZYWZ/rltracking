@@ -15,10 +15,46 @@ from util.constants import *
 from util.data_loading import load_graph_data
 import util.util as util
 
+import torch.nn.functional as F
+from torch.autograd import Variable
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=0, alpha=None, size_average=True):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.alpha = alpha
+        if isinstance(alpha, (float, int)): self.alpha = torch.Tensor([alpha, 1 - alpha])
+        if isinstance(alpha, list): self.alpha = torch.Tensor(alpha)
+        self.size_average = size_average
+
+    def forward(self, input, target):
+        if input.dim() > 2:
+            input = input.view(input.size(0), input.size(1), -1)  # N,C,H,W => N,C,H*W
+            input = input.transpose(1, 2)  # N,C,H*W => N,H*W,C
+            input = input.contiguous().view(-1, input.size(2))  # N,H*W,C => N*H*W,C
+        target = target.view(-1, 1)
+
+        logpt = F.log_softmax(input, dim=1)
+        logpt = logpt.gather(1, target)
+        logpt = logpt.view(-1)
+        pt = Variable(logpt.data.exp())
+
+        if self.alpha is not None:
+            if self.alpha.type() != input.data.type():
+                self.alpha = self.alpha.type_as(input.data)
+            at = self.alpha.gather(0, target.data.view(-1))
+            logpt = logpt * Variable(at)
+
+        loss = -1 * (1 - pt) ** self.gamma * logpt
+        if self.size_average:
+            return loss.mean()
+        else:
+            return loss.sum()
+
 
 # Simple decorator function so that I don't have to pass arguments that don't change from epoch to epoch
 def get_main_loop(config, gat, cross_entropy_loss, optimizer, patience_period, time_start):
-
     device = next(gat.parameters()).device  # fetch the device info from the model instead of passing it as a param
 
     def main_loop(phase, data_loader, epoch=0):
@@ -144,6 +180,7 @@ def train_gat(config):
 
     # Step 3: Prepare other training related utilities (loss & optimizer and decorator function)
     loss_fn = nn.CrossEntropyLoss(reduction='mean')
+    # loss_fn = FocalLoss(gamma=2, alpha=0.25)
     optimizer = Adam(gat.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
 
     # The decorator function makes things cleaner since there is a lot of redundancy between the train and val loops
@@ -188,26 +225,32 @@ def train_gat(config):
         os.path.join(BINARIES_PATH, util.get_available_binary_name(config['dataset_name']))
     )
 
+
 def get_training_args():
     parser = argparse.ArgumentParser()
 
     # Training related
-    parser.add_argument("--num_of_epochs", type=int, help="number of training epochs", default=200)
-    parser.add_argument("--patience_period", type=int, help="number of epochs with no improvement on val before terminating", default=100)
+    parser.add_argument("--num_of_epochs", type=int, help="number of training epochs", default=100)
+    parser.add_argument("--patience_period", type=int,
+                        help="number of epochs with no improvement on val before terminating", default=100)
     parser.add_argument("--lr", type=float, help="model learning rate", default=1e-4)
     parser.add_argument("--weight_decay", type=float, help="L2 regularization on model weights", default=1e-5)
-    parser.add_argument("--should_test", action='store_true', help='should test the model on the test dataset? (no by default)', default=True)
+    parser.add_argument("--should_test", action='store_true',
+                        help='should test the model on the test dataset? (no by default)', default=True)
     parser.add_argument("--force_cpu", action='store_true', help='use CPU if your GPU is too small (no by default)')
 
     # Dataset related (note: we need the dataset name for metadata and related stuff, and not for picking the dataset)
-    parser.add_argument("--dataset_name", choices=[el.name for el in DatasetType], help='dataset to use for training', default="MOT17")
-    parser.add_argument("--batch_size", type=int, help='number of graphs in a batch', default=1024)
+    parser.add_argument("--dataset_name", choices=[el.name for el in DatasetType], help='dataset to use for training',
+                        default="MOT17")
+    parser.add_argument("--batch_size", type=int, help='number of graphs in a batch', default=128)
     parser.add_argument("--should_visualize", action='store_true', help='should visualize the dataset? (no by default)')
 
     # Logging/debugging/checkpoint related (helps a lot with experimentation)
     parser.add_argument("--enable_tensorboard", help="enable tensorboard logging (no by default)", default=True)
-    parser.add_argument("--console_log_freq", type=int, help="log to output console (batch) freq (None for no logging)", default=10)
-    parser.add_argument("--checkpoint_freq", type=int, help="checkpoint model saving (epoch) freq (None for no logging)", default=10)
+    parser.add_argument("--console_log_freq", type=int, help="log to output console (batch) freq (None for no logging)",
+                        default=10)
+    parser.add_argument("--checkpoint_freq", type=int,
+                        help="checkpoint model saving (epoch) freq (None for no logging)", default=10)
     args = parser.parse_args()
 
     # I'm leaving the hyperparam values as reported in the paper, but I experimented a bit and the comments suggest
@@ -216,12 +259,23 @@ def get_training_args():
         # GNNs, contrary to CNNs, are often shallow (it ultimately depends on the graph properties)
         "num_of_layers": 4,  # PPI has got 42% of nodes with all 0 features - that's why 3 layers are useful
         "num_heads_per_layer": [4, 4, 6, 1],  # other values may give even better results from the reported ones
-        "num_features_per_layer": [2053, 512, 128, 32, 2],  # 6 = 1 + 5
-        "add_skip_connection": True,  # skip connection is very important! (keep it otherwise micro-F1 is almost 0)
+        "num_features_per_layer": [2053, 512, 128, 32, 2],  # 2053 = 2048+5
+        "add_skip_connection": False,  # skip connection is very important! (keep it otherwise micro-F1 is almost 0)
         "bias": True,  # bias doesn't matter that much
         "dropout": 0.0,  # dropout hurts the performance (best to keep it at 0)
         "layer_type": LayerType.IMP3  # the only implementation that supports the inductive setting
     }
+    # gat_config = {
+    #     # GNNs, contrary to CNNs, are often shallow (it ultimately depends on the graph properties)
+    #     "num_of_layers": 8,  # PPI has got 42% of nodes with all 0 features - that's why 3 layers are useful
+    #     "num_heads_per_layer": [4, 4, 4, 4, 6, 6, 6, 1],
+    #     # other values may give even better results from the reported ones
+    #     "num_features_per_layer": [2053, 512, 512, 256, 128, 64, 32, 16, 2],  # 2053 = 2048+5
+    #     "add_skip_connection": True,  # skip connection is very important! (keep it otherwise micro-F1 is almost 0)
+    #     "bias": True,  # bias doesn't matter that much
+    #     "dropout": 0.0,  # dropout hurts the performance (best to keep it at 0)
+    #     "layer_type": LayerType.IMP3  # the only implementation that supports the inductive setting
+    # }
 
     # Wrapping training configuration into a dictionary
     training_config = dict()
@@ -236,6 +290,5 @@ def get_training_args():
 
 
 if __name__ == '__main__':
-
     # Train the graph attention network (GAT)
     train_gat(get_training_args())

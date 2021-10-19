@@ -9,7 +9,7 @@ import configparser
 
 MODEL_PATH = "models/state_dict_rltr_RL.pt"
 
-sequence = "MOT17-05-SDP"
+sequence = "MOT17-04-SDP"
 
 TRAIN_SEQUENCE = ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']
 if sequence[:8] in TRAIN_SEQUENCE:

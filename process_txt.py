@@ -1,7 +1,7 @@
 import os
 import csv
 
-basepath = "C:\\Users\\liuxi\\PycharmProjects\\gym-rltracking\\gym_rltracking\\envs\\rltrack\\seq_result"
+basepath = "C:\\Users\\liuxi\\Desktop\\2"
 filenames = []
 names = []
 for root, dirs, files in os.walk(basepath):

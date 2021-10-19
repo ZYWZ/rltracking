@@ -11,11 +11,11 @@ tk_root = tk.Tk()
 tk_root.title("Picture Viewer - Do I want to keep this picture?")
 file_count = 0
 
-FLAG = True
+FLAG = False
 MAKE_VIDEO = False
 dataset = "MOT17"
 # train_test = ""
-sequence = "MOT17-05-SDP"
+sequence = "MOT17-04-SDP"
 
 
 TRAIN_SEQUENCE = ['MOT17-02', 'MOT17-04', 'MOT17-05', 'MOT17-09', 'MOT17-10', 'MOT17-11', 'MOT17-13']
@@ -153,7 +153,7 @@ def draw_result():
                 # and int(line[7]) <= 2 and int(line[6]) == 1 and float(line[8]) > 0.3
                 result.append([int(float(line[1])), int(float(line[2])), int(float(line[3])),
                                int(float(line[2])) + int(float(line[4])),
-                               int(float(line[3])) + int(float(line[5])), int(line[-1]), str(line[-2])])
+                               int(float(line[3])) + int(float(line[5])), float(line[-1]), str(line[-2])])
                 full_result.append(line)
         # print(full_result)
         img = os.path.join(imgs, filename)

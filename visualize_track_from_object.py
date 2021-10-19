@@ -204,7 +204,7 @@ def load_graph_labels(objects, gts, w_h):
         src_boxes = []
         src_indices = []
         for gt in gts:
-            if gt[0] == start_frame:
+            if gt[0] == start_frame and int(gt[7]) <= 2 and int(gt[6]) == 1 and float(gt[8]) > 0.3:
                 box = gt[2], gt[3], gt[4], gt[5]
                 box = box_cxcywh_to_xyxy(box)
                 src_boxes.append(box)

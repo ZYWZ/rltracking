@@ -119,7 +119,7 @@ def get_args_parser():
 def test():
     _, directories, _ = next(walk(basePath))
 
-    for seq_name in directories[8:9]:
+    for seq_name in directories[3:6]:
         output_file = os.path.join("saved_results", seq_name+".pb")
         env = gym.make('gym_rltracking:rltracking-v1')
         env.inference()

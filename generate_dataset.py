@@ -295,19 +295,23 @@ def split_tracklet_impure(seq_results, filename):
 
 
 def gen_traindata_one_seq(filename):
-    IMPURE_THRESHOLD = 1500
-    PURE_THRESHOLD = 1500
+    IMPURE_THRESHOLD = 50
+    PURE_THRESHOLD = 50
     # if filename[:8] in moving_dataset:
     #     IMPURE_THRESHOLD = 500
     #     PURE_THRESHOLD = 2000
     global tracklet_count
     tracklet_count = 0
     seq_results = read_tracklet(filename)
-    # seq_ap_features, seq_st_features, seq_labels, seq_topology = seq_results
-    # del seq_ap_features[64] # remove bad training tracklet
-    # del seq_st_features[64]
-    # del seq_labels[64]
-    # del seq_topology[64]
+    seq_ap_features, seq_st_features, seq_labels, seq_topology = seq_results
+    # for i, label in enumerate(seq_labels):
+    #     if label.count(1) != 0:
+    #         print(i)
+    #         print(label)
+    del seq_ap_features[29] # remove bad training tracklet
+    del seq_st_features[29]
+    del seq_labels[29]
+    del seq_topology[29]
     # save_visualize_graph_data(seq_results, filename)
     pure_tracklets_all, impure_tracklets_all, tracklets_all = [], [], []
     while len(impure_tracklets_all) < IMPURE_THRESHOLD:
@@ -330,12 +334,13 @@ def gen_traindata_no_split(filename):
     seq_results = read_tracklet(filename)
     results = []
     seq_ap_features, seq_st_features, seq_labels, seq_topology = seq_results
+    save_visualize_graph_data(seq_results, filename)
     for i, (result_label, result_ap_feature, result_st_feature, result_topology) in enumerate(zip(seq_labels, seq_ap_features, seq_st_features, seq_topology)):
         if len(result_label) < 2:
             continue
-        if i == 64:
-            print("skipping bad train tracklet")
-            continue
+        # if i == 64:
+        #     print("skipping bad train tracklet")
+        #     continue
         result_topology = np.array(result_topology).T
         result = result_ap_feature, result_st_feature, result_label, result_topology
 
@@ -348,12 +353,13 @@ if __name__ == "__main__":
     _, _, files = next(walk(basePath))
     # for filename in files[:]:
     #     gen_traindata_one_seq(filename)
-    p = Pool(2)
-    p.map(gen_traindata_one_seq,
-          [filename for i, filename in enumerate(files[:])])
-    p.close()
-    p.join()
-        # gen_traindata_no_split(filename)
+    # p = Pool(2)
+    # p.map(gen_traindata_one_seq,
+    #       [filename for i, filename in enumerate(files[1:2])])
+    # p.close()
+    # p.join()
+    for filename in files[2:3]:
+        gen_traindata_no_split(filename)
 
 # track_lengths = []
 # for labels in all_labels:
